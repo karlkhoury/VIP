@@ -1,0 +1,5 @@
+# Experiment 4 (ablation): allocator without the sentence input, cap 8.
+base: base_tokenalloc.yaml
+name: exp4_no_sentence
+allocator: {use_sentence: false}
+eval: {policies: [allocator, equal], saturation: false}

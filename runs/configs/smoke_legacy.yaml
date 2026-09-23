@@ -1,0 +1,11 @@
+# CPU smoke test for the legacy pipeline (tiny random BERT + synthetic data).
+name: smoke_legacy
+pipeline: legacy
+seeds: [0]
+noise_seed: 1234
+out_dir: /tmp/vip_smoke/smoke_legacy
+data: {path: /tmp/vip_smoke/synthetic.parquet, synthetic: true, n: 96, split_seed: 0, fractions: [0.6, 0.2, 0.2]}
+encoder: {name: tiny-random, hidden: 64, unfreeze_last_n: 2}
+legacy: {readout: softmask, ch_dim: 32, tx_mode: per_token}
+train: {batch_size: 8, epochs: 1, max_steps_per_epoch: 3, snr_range: [-10, 10], lr_encoder: 2.0e-5, lr_other: 2.0e-5, recon_weight: 0.1, class_weighted: [esg]}
+eval: {split: test, channels: [AWGN, Rayleigh, Rician], snrs: [-5, 5]}

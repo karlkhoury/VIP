@@ -1,0 +1,27 @@
+# CPU smoke test: tiny random BERT + synthetic data. Checks the pipeline end to end.
+name: smoke_tokenalloc
+pipeline: tokenalloc
+seeds: [0]
+noise_seed: 1234
+out_dir: /tmp/vip_smoke/smoke_tokenalloc
+cap: 8
+data: {path: /tmp/vip_smoke/synthetic.parquet, synthetic: true, n: 96, split_seed: 0, fractions: [0.6, 0.2, 0.2]}
+encoder: {name: tiny-random, hidden: 64, unfreeze_last_n: -1}
+allocator: {use_sentence: true, use_snr: true, use_channel: true, use_confidence: true, use_power: true}
+train:
+  batch_size: 8
+  epochs_warmup: 1
+  epochs_allocator: 1
+  max_steps_per_epoch: 3
+  snr_range: [-10, 10]
+  lambda: 0.01
+  nested_dropout_frac: 0.2
+  priority: {mode: dirichlet, alpha: 1.0}
+  class_weighted: [esg]
+eval:
+  split: test
+  channels: [AWGN, Rayleigh, Rician]
+  snrs: [-5, 5]
+  priorities: [[0.3333, 0.3333, 0.3334], [0.1, 0.1, 0.8]]
+  policies: [allocator, equal, "fixed:4-3-3", proportional, snr_only, random_matched, oracle_greedy, oracle_exhaustive]
+  saturation: true

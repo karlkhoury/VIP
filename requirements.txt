@@ -1,6 +1,8 @@
-torch
-nltk
-w3lib
-tqdm
-scikit-learn
-bert4keras==0.4.6
+torch>=2.1
+transformers>=4.40
+huggingface_hub
+numpy
+pandas
+pyarrow
+pyyaml
+matplotlib

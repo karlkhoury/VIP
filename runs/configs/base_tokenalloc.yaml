@@ -1,0 +1,31 @@
+# Shared settings for every tokenalloc experiment (CLAUDE.md §4-6). Not run directly.
+pipeline: tokenalloc
+seeds: [0, 1, 2]
+noise_seed: 1234                 # fixed channel realizations, shared by ALL methods and pipelines
+save_checkpoint: true
+cap: 8
+data: {path: data/phrasebank_multitask.parquet, split_seed: 0, fractions: [0.7, 0.1, 0.2], max_length: 128}
+encoder:
+  name: yiyanghkust/finbert-pretrain   # NOT ProsusAI/finbert (fine-tuned on PhraseBank = leakage)
+  unfreeze_last_n: -1                  # fine-tune the whole encoder at lr_encoder
+allocator: {use_sentence: true, use_snr: true, use_channel: true, use_confidence: false, use_power: false, tau: 0.3}
+train:
+  batch_size: 16
+  epochs_warmup: 4               # phase 1: nested dropout, no allocator
+  epochs_allocator: 8            # phase 2: allocator on (12 epochs total, as the prior paper)
+  lr_encoder: 2.0e-5
+  lr_other: 1.0e-3
+  snr_range: [-10, 10]           # uniform per sentence
+  channels: [AWGN, Rayleigh, Rician]   # random per batch
+  lambda: 0.0                    # price per task token; 0 = redistribute under the hard cap
+  nested_dropout_frac: 0.2
+  priority: {mode: dirichlet, alpha: 1.0}
+  class_weighted: [esg]
+eval:
+  split: test
+  channels: [AWGN, Rayleigh, Rician]
+  snrs: [-15, -10, -5, -2, 0, 2, 5, 10, 15, 20]
+  priorities: [[0.3333, 0.3333, 0.3334]]
+  policies: [allocator, equal, "fixed:2-2-2", "fixed:3-3-2", "fixed:4-3-3", "fixed:4-4-4", proportional,
+             snr_only, random_matched, oracle_greedy, oracle_exhaustive]
+  saturation: true               # also log k = 1..4 for every task (method uniform_k<j>)

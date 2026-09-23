@@ -1,0 +1,20 @@
+# Shared settings for the prior-paper baselines (paper §IV-B). Not run directly.
+pipeline: legacy
+seeds: [0, 1, 2]
+noise_seed: 1234
+save_checkpoint: false
+data: {path: data/phrasebank_multitask.parquet, split_seed: 0, fractions: [0.7, 0.1, 0.2], max_length: 128}
+encoder: {name: yiyanghkust/finbert-pretrain, unfreeze_last_n: 2}
+legacy: {readout: shared, ch_dim: 32, tx_mode: per_token}
+train:
+  batch_size: 16
+  epochs: 12
+  lr_encoder: 2.0e-5
+  lr_other: 2.0e-5               # the paper reports one lr (2e-5); confirm with the old notebook
+  snr_range: [-10, 10]
+  recon_weight: 0.1
+  class_weighted: [esg]
+eval:
+  split: test
+  channels: [AWGN, Rayleigh, Rician]   # one model per channel, as in the paper
+  snrs: [-15, -10, -5, -2, 0, 2, 5, 10, 15, 20]

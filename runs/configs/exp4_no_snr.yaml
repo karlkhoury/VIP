@@ -1,0 +1,5 @@
+# Experiment 4 (ablation): allocator without the snr input, cap 8.
+base: base_tokenalloc.yaml
+name: exp4_no_snr
+allocator: {use_snr: false}
+eval: {policies: [allocator, equal], saturation: false}

@@ -1,0 +1,10 @@
+# Check (CLAUDE.md §5): one model trained at fixed w = (0.1, 0.1, 0.8). Compare with the
+# Dirichlet model of exp3_priority at the same w.
+base: base_tokenalloc.yaml
+name: exp3_fixed_priority
+train: {priority: {mode: fixed, w: [0.1, 0.1, 0.8]}}
+eval:
+  snrs: [0]
+  priorities: [[0.1, 0.1, 0.8]]
+  policies: [allocator, equal, proportional, oracle_greedy]
+  saturation: false

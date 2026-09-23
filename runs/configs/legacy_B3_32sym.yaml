@@ -1,0 +1,6 @@
+# Prior paper B3 at the SAME budget as the new pipeline at cap 8: the pooled sentence
+# vector is sent as 32 complex symbols (ch_dim 64). Needed for a fair H1 comparison.
+base: base_legacy.yaml
+name: legacy_B3_32sym
+method_name: B3@32sym
+legacy: {readout: softmask, ch_dim: 64, tx_mode: pooled}

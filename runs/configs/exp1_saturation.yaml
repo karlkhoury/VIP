@@ -1,0 +1,6 @@
+# Experiment 1: accuracy vs task tokens per task (1..4) at SNR -5/5/15. Picks L and
+# feeds the oracle. Model = warm-up only (nested dropout), no allocator.
+base: base_tokenalloc.yaml
+name: exp1_saturation
+train: {epochs_warmup: 12, epochs_allocator: 0}
+eval: {snrs: [-5, 5, 15], policies: [], saturation: true}

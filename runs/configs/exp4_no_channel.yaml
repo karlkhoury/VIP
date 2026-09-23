@@ -1,0 +1,5 @@
+# Experiment 4 (ablation): allocator without the channel input, cap 8.
+base: base_tokenalloc.yaml
+name: exp4_no_channel
+allocator: {use_channel: false}
+eval: {policies: [allocator, equal], saturation: false}

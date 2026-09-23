@@ -1,0 +1,4 @@
+# Prior paper B1 as before: every word token sent, ch_dim 32 (= 16 symbols per word token).
+base: base_legacy.yaml
+name: legacy_B1
+legacy: {readout: equal_split}

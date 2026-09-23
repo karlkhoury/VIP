@@ -1,0 +1,5 @@
+# Experiment 2: main sweep at cap K=6. Allocator vs fixed equal split, proportional,
+# SNR-only rule, random matched, greedy / exhaustive oracle. Same weights for all.
+base: base_tokenalloc.yaml
+name: exp2_main_cap6
+cap: 6

@@ -6,3 +6,7 @@ sample_data/
 *.gdoc
 checkpoints/
 data/
+# experiment outputs (keep the configs)
+runs/*
+!runs/configs/
+*.pt

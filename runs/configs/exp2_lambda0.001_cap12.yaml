@@ -1,0 +1,6 @@
+# Experiment 2 (variable rate): price lambda=0.001 per task token under cap 12.
+# Traces accuracy vs symbols sent (lambda = 0 is exp2_main_cap12).
+base: base_tokenalloc.yaml
+name: exp2_lambda0.001_cap12
+cap: 12
+train: {lambda: 0.001}
