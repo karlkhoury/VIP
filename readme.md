@@ -2,7 +2,10 @@
 
 Karl Khouri, Maria Slim (AUB). Follow-up to *Mapping the Design Space of Task-Priority
 Resource Allocation in Multi-Task Wireless Semantic Communication* (TP-SRA).
-The design contract is [`CLAUDE.md`](CLAUDE.md); read it first.
+The design contract is [`CLAUDE.md`](CLAUDE.md); read it first. The pipeline figure is
+[`docs/architecture.png`](docs/architecture.png), the prior paper is
+[`docs/prior_paper_TPSRA.pdf`](docs/prior_paper_TPSRA.pdf), and findings and open decisions
+from the build are in [`docs/session_notes.md`](docs/session_notes.md).
 
 One financial sentence, three tasks (Sentiment, FLS, ESG). Each task owns 4 learnable
 **task tokens** inside the BERT encoder. A small **allocator** decides, per sentence,
