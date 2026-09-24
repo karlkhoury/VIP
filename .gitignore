@@ -10,3 +10,6 @@ data/
 runs/*
 !runs/configs/
 *.pt
+# old prior-paper assets kept locally only (backup in Desktop/VIP - Copy)
+DeepSC-master/
+*.zip

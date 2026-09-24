@@ -7,7 +7,7 @@ figure, steps 1-12) and `docs/prior_paper_TPSRA.pdf` (the prior paper).
 - Tasks 1-7 of CLAUDE.md §11 are implemented and tested offline (`python -m tests.test_all`,
   11 tests; `python run.py --config runs/configs/smoke.yaml` runs end to end on synthetic data).
 - Tasks 8-9 (real runs, per-sentence CSVs) have NOT been run: they need a GPU and the data file.
-- Old files still to delete (the owner approved; the cloud session was not permitted to):
+- Old files deleted (done on the local machine; backup kept outside the repo):
   `main.py utils.py dataset.py generate_labels.py performance.py SBERT.py eval_tools.py
   preprocess_text.py models/` (replaced by `common/`, `legacy/`, `tokenalloc/`).
 
