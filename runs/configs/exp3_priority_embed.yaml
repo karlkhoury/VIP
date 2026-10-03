@@ -1,0 +1,13 @@
+# Experiment 3 priority sweep on the figure-style allocator (priority_mode: embed).
+# Re-uses the exp2_main_cap8_embed_2stage checkpoints (no retraining). Same sweep as exp3_priority.
+base: base_tokenalloc.yaml
+name: exp3_priority_embed
+load_checkpoint: runs/exp2_main_cap8_embed_2stage/seed{seed}/model.pt
+save_checkpoint: false
+allocator: {priority_mode: embed}
+eval:
+  snrs: [0]
+  priorities: [[0.45, 0.45, 0.1], [0.4, 0.4, 0.2], [0.35, 0.35, 0.3], [0.3, 0.3, 0.4], [0.25, 0.25, 0.5],
+               [0.2, 0.2, 0.6], [0.15, 0.15, 0.7], [0.1, 0.1, 0.8], [0.05, 0.05, 0.9]]
+  policies: [allocator, equal, proportional, oracle_greedy]
+  saturation: false

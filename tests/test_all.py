@@ -100,6 +100,20 @@ def test_allocator_init_equal_split_and_priority_monotone():
     assert (alloc(cls, snr, oh, w_hi)[0][:, 0] >= alloc(cls, snr, oh, w_lo)[0][:, 0]).all()
 
 
+def test_allocator_embed_mode():
+    """The figure's plain design (w -> 32 inside the trunk): equal at init, w changes scores."""
+    torch.manual_seed(0)
+    alloc = Allocator(hidden=32, priority_mode="embed")
+    assert alloc.gain_head is None and alloc.trunk[0].in_features == 32 + 3 * 32
+    cls, snr, oh = torch.randn(4, 32), torch.zeros(4), torch.eye(3)[[0, 1, 2, 0]]
+    s0, _ = alloc(cls, snr, oh, torch.full((4, 3), 1 / 3))
+    assert torch.allclose(s0, torch.zeros_like(s0))                              # equal at init
+    for p in alloc.parameters():
+        p.data += torch.randn_like(p) * 0.5
+    w_lo, w_hi = torch.tensor([[0.2, 0.4, 0.4]] * 4), torch.tensor([[0.8, 0.1, 0.1]] * 4)
+    assert not torch.allclose(alloc(cls, snr, oh, w_hi)[0], alloc(cls, snr, oh, w_lo)[0])
+
+
 def test_power_budget():
     k = torch.tensor([[2.0, 3.0, 3.0], [1.0, 1.0, 4.0]])
     p = power_shares(torch.randn(2, 3), k)

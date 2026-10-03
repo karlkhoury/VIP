@@ -18,6 +18,10 @@ still decides HOW MUCH priority matters (e.g. little at high SNR).
 
 Init: output layers zero => equal soft counts (token version of B1). The gain bias
 starts at -5 (gain ~ 0.007), so the start is equal split for any w.
+
+priority_mode="embed" is the plain design of the architecture figure, kept as a
+comparison (Exp. 3): w -> 32 (ReLU) is concatenated into the trunk with CLS, SNR and
+channel, and the count head reads the score directly. No monotonicity guarantee.
 """
 
 import math
@@ -30,27 +34,35 @@ import torch.nn.functional as F
 class Allocator(nn.Module):
     def __init__(self, hidden: int = 768, n_tasks: int = 3, max_tokens: int = 4,
                  use_sentence=True, use_snr=True, use_channel=True, use_confidence=False,
-                 use_power=False, emb=32, width=128):
+                 use_power=False, emb=32, width=128, priority_mode="gain", use_priority=True):
         super().__init__()
+        if priority_mode not in ("gain", "embed"):
+            raise ValueError(f"priority_mode must be 'gain' or 'embed', got {priority_mode!r}")
         self.n_tasks, self.max_tokens = n_tasks, max_tokens
         self.use_sentence, self.use_snr, self.use_channel = use_sentence, use_snr, use_channel
         self.use_confidence, self.use_power = use_confidence, use_power
+        self.priority_mode = priority_mode
+        self.use_priority = use_priority        # False: the allocator always sees equal priority
         self.snr_emb = nn.Sequential(nn.Linear(1, emb), nn.ReLU())
         self.ch_emb = nn.Sequential(nn.Linear(3, emb), nn.ReLU())
-        in_dim = hidden + 2 * emb + (n_tasks if use_confidence else 0)
+        self.prio_emb = nn.Sequential(nn.Linear(n_tasks, emb), nn.ReLU()) if priority_mode == "embed" else None
+        in_dim = hidden + (3 if priority_mode == "embed" else 2) * emb + (n_tasks if use_confidence else 0)
         self.trunk = nn.Sequential(nn.Linear(in_dim, width), nn.ReLU())
         self.count_head = nn.Linear(width, n_tasks)
-        self.gain_head = nn.Linear(width, n_tasks)
+        self.gain_head = nn.Linear(width, n_tasks) if priority_mode == "gain" else None
         self.power_head = nn.Linear(width, n_tasks) if use_power else None
         for head in (self.count_head, self.gain_head, self.power_head):
             if head is not None:
                 nn.init.zeros_(head.weight)
                 nn.init.zeros_(head.bias)
-        nn.init.constant_(self.gain_head.bias, -5.0)
+        if self.gain_head is not None:
+            nn.init.constant_(self.gain_head.bias, -5.0)
 
     def forward(self, cls, snr_db, channel_onehot, w, confidence=None):
         """Returns count scores [B, T] and power scores [B, T] (or None)."""
         B = cls.shape[0]
+        if not self.use_priority:
+            w = torch.full_like(w, 1.0 / w.shape[-1])
         parts = [
             cls if self.use_sentence else torch.zeros_like(cls),
             self.snr_emb((snr_db / 10.0).view(B, 1)) if self.use_snr
@@ -58,10 +70,15 @@ class Allocator(nn.Module):
             self.ch_emb(channel_onehot) if self.use_channel
             else torch.zeros(B, self.ch_emb[0].out_features, device=cls.device),
         ]
+        if self.prio_emb is not None:
+            parts.append(self.prio_emb(w))
         if self.use_confidence:
             parts.append(confidence.detach())
         h = self.trunk(torch.cat(parts, dim=-1))
-        scores = self.count_head(h) + F.softplus(self.gain_head(h)) * w
+        if self.priority_mode == "gain":
+            scores = self.count_head(h) + F.softplus(self.gain_head(h)) * w
+        else:
+            scores = self.count_head(h)
         power = self.power_head(h) if self.use_power else None
         return scores, power
 
@@ -77,7 +94,7 @@ def soft_counts(scores: torch.Tensor, cap: int, max_tokens: int = 4) -> torch.Te
     return torch.where(total > cap, 1.0 + (c - 1.0) * shrink, c)
 
 
-def hard_counts(c: torch.Tensor, cap: int, w: torch.Tensor) -> torch.Tensor:
+def hard_counts(c: torch.Tensor, cap: int, w: torch.Tensor, max_tokens: int = 4) -> torch.Tensor:
     """
     Round to nearest; if that exceeds the cap use largest remainder (floor all,
     hand out the rest by largest fractional part, ties broken by priority).
@@ -94,7 +111,7 @@ def hard_counts(c: torch.Tensor, cap: int, w: torch.Tensor) -> torch.Tensor:
         rank = torch.argsort(order, dim=-1)
         fl = fl + (rank < rest.unsqueeze(-1)).float()
         k[over] = fl
-    return k.clamp(1, c.new_tensor(4.0))
+    return k.clamp(1, c.new_tensor(float(max_tokens)))
 
 
 def straight_through(c_soft: torch.Tensor, k_hard: torch.Tensor) -> torch.Tensor:

@@ -1,0 +1,10 @@
+base: smoke.yaml
+name: smoke_awgn_alloc
+out_dir: /tmp/vip_smoke/smoke_awgn_alloc
+tokens_per_task: 8
+max_tokens_per_task: 4
+cap: 8
+init_checkpoint: /tmp/vip_smoke/smoke_awgn/seed{seed}/model.pt
+allocator: {use_channel: false, use_confidence: false, use_power: false}
+train: {channels: [AWGN], allocator_stage: frozen, epochs_allocator: 2, lambda: 0.01}
+eval: {channels: [AWGN], snrs: [-5, 5], policies: [allocator, equal, snr_only, all], saturation: false, priorities: [[0.3333, 0.3333, 0.3334]]}

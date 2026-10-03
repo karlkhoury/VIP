@@ -118,24 +118,26 @@ def evaluate(model, loader, cfg, seed, device, val_curves=None, split="test"):
                             k, extra = a["k_hard"], {"power_scores": a["power_scores"]}
                             alloc_k = k
                         elif kind == "equal":
-                            k = P.equal_split(cap, B, device=device)
+                            k = P.equal_split(cap, B, max_tokens=model.Jmax, device=device)
+                        elif kind == "all":                  # no allocator, no cap: every token
+                            k = torch.full((B, model.T), float(model.J), device=device)
                         elif kind == "fixed":
                             k = P.fixed_split(arg, B, device=device)
                         elif kind == "proportional":
-                            k = P.proportional(w, cap)
+                            k = P.proportional(w, cap, model.Jmax)
                         elif kind == "snr_only":
                             if val_curves is None:
                                 raise ValueError("snr_only needs validation curves")
-                            mean = val_curves[float(s)].unsqueeze(0).expand(B, -1, -1)
+                            mean = val_curves[float(s)][:, :model.Jmax].unsqueeze(0).expand(B, -1, -1)
                             k = P.greedy_from_curves(mean, w, cap, lam)
                         elif kind == "random_matched":
                             if alloc_k is None:
                                 raise ValueError("list 'allocator' before 'random_matched'")
-                            k = P.random_matched(alloc_k.sum(-1), rng)
+                            k = P.random_matched(alloc_k.sum(-1), rng, max_tokens=model.Jmax)
                         elif kind == "oracle_greedy":
-                            k = P.greedy_from_curves(ce, w, cap, lam)
+                            k = P.greedy_from_curves(ce[..., :model.Jmax], w, cap, lam)
                         elif kind == "oracle_exhaustive":
-                            k = P.exhaustive_from_curves(ce, w, cap, lam)
+                            k = P.exhaustive_from_curves(ce[..., :model.Jmax], w, cap, lam)
                         else:
                             raise ValueError(f"unknown policy {name!r}")
                         out = model.transmit_decode(task_out, snr, real, k,

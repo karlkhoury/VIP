@@ -1,0 +1,7 @@
+# Experiment 2 (variable rate), two-stage: price lambda=0.01 per task token under cap 12,
+# allocator trained alone on the frozen Exp. 1 pipeline. Traces accuracy vs symbols sent.
+base: base_tokenalloc.yaml
+name: exp2_lambda0.01_cap12_2stage
+cap: 12
+init_checkpoint: runs/exp1_saturation/seed{seed}/model.pt
+train: {allocator_stage: frozen, epochs_allocator: 30, lr_allocator: 1.0e-3, lambda: 0.01}

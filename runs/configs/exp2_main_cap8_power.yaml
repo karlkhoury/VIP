@@ -1,0 +1,6 @@
+# Same as exp2_main_cap8 with per-task power on (important tasks sent louder;
+# sum_t k_t p_t = K_used keeps average power per symbol at 1).
+base: base_tokenalloc.yaml
+name: exp2_main_cap8_power
+cap: 8
+allocator: {use_power: true}

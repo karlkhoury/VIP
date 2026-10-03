@@ -1,0 +1,15 @@
+# Input ablation (AWGN only, cap 16, per-task max 8, lambda 0.003, frozen awgn_pipeline_J32).
+# Allocator inputs: priority only
+base: base_tokenalloc.yaml
+name: awgn_abl_cap16_prio
+tokens_per_task: 32
+max_tokens_per_task: 8
+cap: 16
+init_checkpoint: runs/awgn_pipeline_J32/seed{seed}/model.pt
+allocator: {use_channel: false, use_sentence: false, use_snr: false, use_priority: true, use_confidence: false}
+train: {channels: [AWGN], allocator_stage: frozen, epochs_allocator: 30, lr_allocator: 1.0e-3, lambda: 0.003}
+eval:
+  channels: [AWGN]
+  priorities: [[0.3333, 0.3333, 0.3334], [0.1, 0.1, 0.8], [0.8, 0.1, 0.1]]
+  policies: [allocator, equal, snr_only]
+  saturation: false

@@ -20,7 +20,7 @@ train:
   lambda: 0.0                    # price per task token; 0 = redistribute under the hard cap
   nested_dropout_frac: 0.2
   priority: {mode: dirichlet, alpha: 1.0}
-  class_weighted: [esg]
+  class_weighted: [fls, esg]     # inverse-frequency CE for the two imbalanced tasks (as the prior paper's --weighted-loss)
 eval:
   split: test
   channels: [AWGN, Rayleigh, Rician]

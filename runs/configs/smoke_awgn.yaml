@@ -1,0 +1,8 @@
+base: smoke.yaml
+name: smoke_awgn
+out_dir: /tmp/vip_smoke/smoke_awgn
+tokens_per_task: 8
+cap: 24
+allocator: {use_channel: false, use_confidence: false, use_power: false}
+train: {channels: [AWGN], epochs_warmup: 1, epochs_allocator: 0}
+eval: {channels: [AWGN], snrs: [-5, 5], policies: [all], saturation: true, priorities: [[0.3333, 0.3333, 0.3334]]}

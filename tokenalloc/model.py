@@ -70,19 +70,23 @@ class MaskedAttentionPool(nn.Module):
 
 
 class TokenAllocSystem(nn.Module):
-    def __init__(self, bert, alloc_cfg: dict, tokens_per_task: int = 4):
+    def __init__(self, bert, alloc_cfg: dict, tokens_per_task: int = 4, max_tokens_per_task: int = None):
         super().__init__()
         self.T = len(TASKS)
-        self.J = tokens_per_task
+        self.J = tokens_per_task                    # task tokens each task OWNS (slots)
+        # most tokens one task may SEND (e.g. cap/2); defaults to all it owns
+        self.Jmax = min(max_tokens_per_task or tokens_per_task, tokens_per_task)
         self.encoder = TaskTokenEncoder(bert, self.T, self.J)
         H = self.encoder.hidden
         self.allocator = Allocator(
-            hidden=H, n_tasks=self.T, max_tokens=self.J,
+            hidden=H, n_tasks=self.T, max_tokens=self.Jmax,
             use_sentence=alloc_cfg.get("use_sentence", True),
             use_snr=alloc_cfg.get("use_snr", True),
             use_channel=alloc_cfg.get("use_channel", True),
             use_confidence=alloc_cfg.get("use_confidence", False),
-            use_power=alloc_cfg.get("use_power", False))
+            use_power=alloc_cfg.get("use_power", False),
+            priority_mode=alloc_cfg.get("priority_mode", "gain"),
+            use_priority=alloc_cfg.get("use_priority", True))
         self.tau = alloc_cfg.get("tau", 0.3)
         self.ch_encoder = PerTaskMLP(self.T, H, 256, 2 * SYMBOLS_PER_TOKEN)   # 768 -> 256 -> 8
         self.ch_decoder = PerTaskMLP(self.T, 2 * SYMBOLS_PER_TOKEN, 256, H)   # 8 -> 256 -> 768
@@ -96,11 +100,19 @@ class TokenAllocSystem(nn.Module):
     def task_logits(self, pooled):                          # pooled [B, T, H]
         return [head(pooled[:, t]) for t, head in enumerate(self.heads)]
 
+    @torch.no_grad()
     def confidence(self, task_out):
-        """Normalized entropy of each head on the CLEAN pooled task tokens (all 4)."""
+        """
+        Normalized entropy of each head on the CLEAN task tokens (all 4 sent, no channel):
+        channel encoder -> unit energy -> channel decoder -> pooling -> head, i.e. exactly
+        what the receiver would see over a perfect channel. The heads were trained on
+        decoder outputs, so they are applied to decoder outputs here too. Detached.
+        """
         m = torch.ones(task_out.shape[:3], device=task_out.device)
-        logits = self.task_logits(self.pool(task_out, m))
-        return torch.stack([normalized_entropy(l) for l in logits], dim=-1).detach()
+        x = normalize_energy(real_to_complex(self.ch_encoder(task_out)))
+        r = self.ch_decoder(complex_to_real(x))
+        logits = self.task_logits(self.pool(r, m))
+        return torch.stack([normalized_entropy(l) for l in logits], dim=-1)
 
     # ── step 3 ───────────────────────────────────────────────────────────────
     def allocate(self, cls, task_out, snr_db, channel: str, w, cap: int):
@@ -109,8 +121,8 @@ class TokenAllocSystem(nn.Module):
                            len(CHANNELS)).float()
         conf = self.confidence(task_out) if self.allocator.use_confidence else None
         scores, power_scores = self.allocator(cls, snr_db, onehot, w, conf)
-        c = soft_counts(scores, cap, self.J)
-        k = hard_counts(c, cap, w)
+        c = soft_counts(scores, cap, self.Jmax)
+        k = hard_counts(c, cap, w, self.Jmax)
         return {"c_soft": c, "k_hard": k, "k_st": straight_through(c, k), "power_scores": power_scores}
 
     # ── steps 4-12 ───────────────────────────────────────────────────────────

@@ -3,6 +3,7 @@ name: smoke_tokenalloc
 pipeline: tokenalloc
 seeds: [0]
 noise_seed: 1234
+save_checkpoint: true
 out_dir: /tmp/vip_smoke/smoke_tokenalloc
 cap: 8
 data: {path: /tmp/vip_smoke/synthetic.parquet, synthetic: true, n: 96, split_seed: 0, fractions: [0.6, 0.2, 0.2]}

@@ -1,0 +1,8 @@
+# Experiment 2, two-stage schedule: the pipeline is the Exp. 1 warm-up model (best
+# validation epoch, frozen); only the allocator is trained (cached encoder outputs),
+# then evaluated against every baseline on the same frozen pipeline.
+base: base_tokenalloc.yaml
+name: exp2_main_cap8_2stage
+cap: 8
+init_checkpoint: runs/exp1_saturation/seed{seed}/model.pt
+train: {allocator_stage: frozen, epochs_allocator: 30, lr_allocator: 1.0e-3}

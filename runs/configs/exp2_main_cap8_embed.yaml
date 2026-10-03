@@ -1,0 +1,6 @@
+# Same as exp2_main_cap8, but priority enters the allocator as in the architecture
+# figure (w -> 32 inside the trunk, no monotonicity guarantee). Compared in Exp. 3.
+base: base_tokenalloc.yaml
+name: exp2_main_cap8_embed
+cap: 8
+allocator: {priority_mode: embed}

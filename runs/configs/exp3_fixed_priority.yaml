@@ -1,8 +1,9 @@
-# Check (CLAUDE.md §5): one model trained at fixed w = (0.1, 0.1, 0.8). Compare with the
-# Dirichlet model of exp3_priority at the same w.
+# Check (CLAUDE.md §5): one allocator trained at fixed w = (0.1, 0.1, 0.8) on the same
+# frozen Exp. 1 pipeline. Compare with the Dirichlet allocator of exp3_priority at the same w.
 base: base_tokenalloc.yaml
 name: exp3_fixed_priority
-train: {priority: {mode: fixed, w: [0.1, 0.1, 0.8]}}
+init_checkpoint: runs/exp1_saturation/seed{seed}/model.pt
+train: {allocator_stage: frozen, epochs_allocator: 30, lr_allocator: 1.0e-3, priority: {mode: fixed, w: [0.1, 0.1, 0.8]}}
 eval:
   snrs: [0]
   priorities: [[0.1, 0.1, 0.8]]

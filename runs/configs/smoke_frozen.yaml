@@ -1,0 +1,7 @@
+# CPU smoke test of the two-stage schedule: pipeline from the smoke run, allocator only.
+base: smoke.yaml
+name: smoke_frozen
+out_dir: /tmp/vip_smoke/smoke_frozen
+init_checkpoint: /tmp/vip_smoke/smoke_tokenalloc/seed{seed}/model.pt
+allocator: {use_confidence: true}
+train: {allocator_stage: frozen, epochs_allocator: 2}

@@ -75,7 +75,13 @@ def load_encoder(enc_cfg: dict):
         from common.tiny import tiny_bert_and_tokenizer
         return tiny_bert_and_tokenizer(hidden=enc_cfg.get("hidden", 64))
     from transformers import AutoModel, AutoTokenizer
-    return AutoModel.from_pretrained(name), AutoTokenizer.from_pretrained(name)
+    try:
+        return AutoModel.from_pretrained(name), AutoTokenizer.from_pretrained(name)
+    except ValueError:
+        # yiyanghkust/finbert-pretrain ships a config.json without `model_type` and only a
+        # vocab.txt (uncased FinVocab), which newer transformers cannot auto-detect.
+        from transformers import BertModel, BertTokenizerFast
+        return BertModel.from_pretrained(name), BertTokenizerFast.from_pretrained(name, do_lower_case=True)
 
 
 def set_trainable_layers(bert, unfreeze_last_n: int):

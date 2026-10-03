@@ -1,0 +1,11 @@
+# AWGN-only sanity study, stage 2: allocator alone (no channel-type input) on the frozen
+# awgn_pipeline_J32. Total cap 8 task tokens, per-task max 4 (= cap/2), price lambda=0.01.
+base: base_tokenalloc.yaml
+name: awgn_cap8_lam0.01
+tokens_per_task: 32
+max_tokens_per_task: 4
+cap: 8
+init_checkpoint: runs/awgn_pipeline_J32/seed{seed}/model.pt
+allocator: {use_channel: false}
+train: {channels: [AWGN], allocator_stage: frozen, epochs_allocator: 30, lr_allocator: 1.0e-3, lambda: 0.01}
+eval: {channels: [AWGN], policies: [allocator, equal, snr_only, all], saturation: false}

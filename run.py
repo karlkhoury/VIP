@@ -29,7 +29,8 @@ def run_tokenalloc(cfg, seed, out_dir, device, log):
 
     bert, tok = load_encoder(cfg["encoder"])
     ds, split, loaders = make_loaders(cfg["data"], tok, cfg["train"].get("batch_size", 16), seed)
-    model = TokenAllocSystem(bert, cfg.get("allocator", {})).to(device)
+    model = TokenAllocSystem(bert, cfg.get("allocator", {}), cfg.get("tokens_per_task", 4),
+                             cfg.get("max_tokens_per_task")).to(device)
 
     batch = next(iter(loaders["val"]))
     ok, diffs = check_attention_rules(model.encoder, batch["input_ids"].to(device),
@@ -43,6 +44,17 @@ def run_tokenalloc(cfg, seed, out_dir, device, log):
         model.load_state_dict(torch.load(path, map_location=device))
         log(f"loaded {path} (no training)")
         history = []
+    elif cfg["train"].get("allocator_stage", "joint") == "frozen":
+        # two-stage: pipeline from init_checkpoint (e.g. Exp. 1 warm-up), allocator trained alone
+        from tokenalloc.train import train_allocator_frozen
+        path = cfg["init_checkpoint"].format(seed=seed)
+        state = {k: v for k, v in torch.load(path, map_location=device).items()
+                 if not k.startswith("allocator.")}           # fresh allocator (any priority_mode)
+        missing, unexpected = model.load_state_dict(state, strict=False)
+        assert all(k.startswith("allocator.") for k in missing) and not unexpected, (missing, unexpected)
+        log(f"pipeline from {path}; training the allocator only")
+        cw = class_weights(ds, split["train"], cfg["train"].get("class_weighted", ["esg"]), device)
+        history = train_allocator_frozen(model, loaders, cw, cfg, seed, device, log)
     else:
         cw = class_weights(ds, split["train"], cfg["train"].get("class_weighted", ["esg"]), device)
         history = train_tokenalloc(model, loaders, cw, cfg, seed, device, log)

@@ -1,0 +1,10 @@
+# AWGN-only sanity study, stage 1: pipeline with 32 task tokens per task (96 total), trained with
+# nested dropout on AWGN only (h = 1, so zero forcing does nothing). No channel-type input.
+# Evaluation logs uniform_k1..32 (no allocator, k tokens per task) and 'all' (every token, no cap).
+base: base_tokenalloc.yaml
+name: awgn_pipeline_J32
+tokens_per_task: 32
+cap: 96
+allocator: {use_channel: false}
+train: {channels: [AWGN], epochs_warmup: 12, epochs_allocator: 0}
+eval: {channels: [AWGN], policies: [all], saturation: true}

@@ -1,0 +1,8 @@
+# As exp2_lambda0.001_cap12_2stage with the confidence input ON (per-task uncertainty of each
+# head on the clean task tokens, detached). Toggle: allocator.use_confidence.
+base: base_tokenalloc.yaml
+name: exp2_lambda0.001_cap12_2stage_conf
+cap: 12
+init_checkpoint: runs/exp1_saturation/seed{seed}/model.pt
+allocator: {use_confidence: true}
+train: {allocator_stage: frozen, epochs_allocator: 30, lr_allocator: 1.0e-3, lambda: 0.001}
