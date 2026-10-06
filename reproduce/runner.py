@@ -4,9 +4,10 @@ reproduce/runner.py
 Writes the config of every experiment of the paper and runs it with
 reproduce/run_experiment.py (run.py itself is not modified).
 
-Setting (AWGN study): AWGN only, no channel-type input, J task tokens per task,
-total cap K and per-task maximum K/2, two-stage training (frozen pipeline, then the
-allocator alone), three seeds, fixed noise shared by every method.
+Setting: one channel only (AWGN by default, or Rayleigh / Rician via `channel`), used
+for both training and testing, no channel-type input, J task tokens per task, total cap
+K and per-task maximum K/2, two-stage training (frozen pipeline, then the allocator
+alone), three seeds, fixed noise and fading shared by every method.
 
 Runs are resumable: a seed whose per_sentence.csv.gz exists is skipped, so the
 notebook can be re-run after a Colab disconnect. Outputs go to `out_root`
@@ -20,6 +21,7 @@ import sys
 
 import yaml
 
+from common.channel import CHANNELS
 from common.utils import deep_update
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -46,7 +48,10 @@ class Study:
                  epsilon=0.25, snrs=SNRS, priority_snrs=(-10, -5, 0),
                  priority_grid=(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9),
                  ablation=tuple(ABLATION), data_path="data/phrasebank_multitask.parquet",
-                 smoke=False):
+                 smoke=False, channel="AWGN"):
+        if channel not in CHANNELS:
+            raise ValueError(f"channel must be one of {CHANNELS}")
+        self.channel = channel
         self.out_root = out_root
         self.seeds = list(seeds)
         self.J = tokens_per_task
@@ -89,8 +94,9 @@ class Study:
             "seeds": self.seeds, "noise_seed": 1234, "tokens_per_task": self.J,
             "data": {"path": self.data_path},
             "allocator": {"use_channel": False},
-            "train": {"channels": ["AWGN"]},
-            "eval": {"channels": ["AWGN"], "snrs": self.snrs, "priorities": [EQUAL_W], "saturation": False},
+            "train": {"channels": [self.channel]},
+            "eval": {"channels": [self.channel], "snrs": self.snrs, "priorities": [EQUAL_W],
+                     "saturation": False},
         })
         if self.smoke:   # tiny random encoder + synthetic data: checks the code path on CPU
             cfg = deep_update(cfg, {
