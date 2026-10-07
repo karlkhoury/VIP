@@ -66,8 +66,9 @@ def ci(r, digits=2):
 
 
 class Report:
-    def __init__(self, study):
+    def __init__(self, study, prefix=""):
         self.s = study
+        self.prefix = prefix                      # figure-name prefix (e.g. "A_" for the small budget)
         self.fig_dir = os.path.join(study.out_root, "report")
         os.makedirs(self.fig_dir, exist_ok=True)
         self.lam = None
@@ -101,7 +102,7 @@ class Report:
                 if scale == "log":
                     axis.set_major_formatter(ScalarFormatter())
                     axis.set_minor_formatter(NullFormatter())
-        path = os.path.join(self.fig_dir, f"{name}.png")
+        path = os.path.join(self.fig_dir, f"{self.prefix}{name}.png")
         fig.savefig(path, dpi=200, bbox_inches="tight")
         if NOTEBOOK:
             plt.show()
@@ -422,3 +423,198 @@ class Report:
     def summary(self):
         md("### Significant results\n" + "\n".join(f"- {f}" for f in self.findings))
         md(f"Figures saved in `{self.fig_dir}`.")
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Part A: small token budget (4 task tokens per task), see runner.SmallStudy
+# ════════════════════════════════════════════════════════════════════════════
+
+def symbols_for(points, target):
+    """Symbols needed to reach `target` accuracy along the upper envelope of (symbols, acc) points."""
+    env, best = [], -np.inf
+    for s, a in sorted(points):
+        if a > best:
+            env.append((s, a))
+            best = a
+    if not env or target > env[-1][1]:
+        return np.nan
+    if target <= env[0][1]:
+        return env[0][0]
+    for (s0, a0), (s1, a1) in zip(env, env[1:]):
+        if a0 < target <= a1:
+            return s0 + (target - a0) / (a1 - a0) * (s1 - s0)
+    return np.nan
+
+
+class SmallReport(Report):
+    def __init__(self, study):
+        super().__init__(study, prefix="A_")
+        self.lam = 0.0
+
+    def save(self, fig, name):
+        return super().save(fig, {"7_priority": "3_priority", "3_rate": "2_rate"}.get(name, name))
+
+    def _done(self, name):
+        return bool(glob.glob(os.path.join(self.s.run_dir(name), "seed*", "per_sentence.csv.gz")))
+
+    def _task_curves(self):
+        """Per-task accuracy (%) for k = 1..J tokens, per SNR, from the stage-1 evaluation."""
+        p = self.load(self.s.PIPELINE)
+        u = p[p.method.str.startswith("uniform_k")].copy()
+        u["k"] = u.method.str[9:].astype(int)
+        return u, {key: u.pivot_table(index="k", columns="snr_db", values=f"correct_{key}") * 100 for key in "SFE"}
+
+    # ── A1. saturation: gain from 1 to J tokens per task ─────────────────────
+    def saturation(self):
+        super().saturation()
+        u, cur = self._task_curves()
+        J = int(u.k.max())
+        rows = []
+        for s in cur["S"].columns:
+            rows.append({"SNR (dB)": s, **{name: cur[key].loc[J, s] - cur[key].loc[1, s]
+                                         for key, name in (("S", "Sentiment"), ("F", "FLS"), ("E", "ESG"))}})
+        table(pd.DataFrame(rows), f"Accuracy gain (points) from 1 to {J} task tokens per task, no allocator", 1)
+
+    # ── A2. fixed cap 8, lambda = 0 ──────────────────────────────────────────
+    def fixed_cap(self):
+        from reproduce.runner import CAP8_VARIANTS
+        cap = self.s.fixed_cap
+        runs = {v: self.load(self.s.cap8_name(v)) for v in CAP8_VARIANTS if self._done(self.s.cap8_name(v))}
+        base = runs["gain"]
+        eq = base[base.method == "equal"]
+        groups = [("Equal split (no allocator)", eq),
+                  ("Proportional split", base[base.method == "proportional"]),
+                  ("Random split, same total as the allocator", base[base.method == "random_matched"])]
+        groups += [(CAP8_VARIANTS[v][1], d[d.method == "allocator"]) for v, d in runs.items()]
+        groups += [("Hindsight oracle (not practical)", base[base.method == "oracle_greedy"])]
+        rows = []
+        for name, x in groups:
+            row = {"method": name, "symbols": x.symbols.mean(), "Sentiment": x.correct_S.mean() * 100,
+                   "FLS": x.correct_F.mean() * 100, "ESG": x.correct_E.mean() * 100, "mean accuracy": x.acc.mean()}
+            if not name.startswith("Equal"):
+                r = self.paired(x, eq, "acc")
+                per_seed = (x.groupby("seed").acc.mean() - eq.groupby("seed").acc.mean()).round(2).tolist()
+                row["Δ vs equal [95% CI]"] = ci(r)
+                row["Δ per seed"] = ", ".join(f"{v:+.2f}" for v in per_seed)
+            rows.append(row)
+        table(pd.DataFrame(rows), f"Fixed cap {cap}, λ = 0 (test, mean of seeds and SNRs)")
+        for name, x in groups[3:-1]:
+            r = self.paired(x, eq, "acc")
+            self.note(f"Cap {cap}: {name} vs equal split: {ci(r)} points of accuracy.")
+        # best fixed split chosen in hindsight, per SNR (each task decodes only its own tokens)
+        u, cur = self._task_curves()
+        J = int(u.k.max())
+        combos = [(a, b, c) for a in range(1, J + 1) for b in range(1, J + 1) for c in range(1, J + 1)
+                  if a + b + c == cap]
+        rows = []
+        for s in cur["S"].columns:
+            score = {k: (cur["S"].loc[k[0], s] + cur["F"].loc[k[1], s] + cur["E"].loc[k[2], s]) / 3 for k in combos}
+            best = max(score, key=score.get)
+            e = eq[eq.snr_db == s].acc.mean()
+            rows.append({"SNR (dB)": s, "best split S/F/E": "/".join(map(str, best)),
+                         "best split accuracy": score[best], "equal split accuracy": e,
+                         "room (points)": score[best] - e})
+        t = pd.DataFrame(rows)
+        table(t, f"How much room is there? Best fixed split per SNR, chosen with the test labels (cap {cap})")
+        self.note(f"Cap {cap}: the best fixed split chosen in hindsight beats the equal split by at most "
+                  f"{t['room (points)'].max():.2f} points (at {t.loc[t['room (points)'].idxmax(), 'SNR (dB)']:g} dB).")
+
+    # ── A3. variable rate at cap 12 ──────────────────────────────────────────
+    def rate(self):
+        u, _ = self._task_curves()
+        fixed = [(f"Fixed {k}/{k}/{k} (no allocator)", 12 * k, g.acc.mean()) for k, g in u.groupby("k")]
+        first = self.load(self.s.rate_name(self.s.lambda_grid[0]))
+        for m in ("fixed:4-3-3", "fixed:3-3-2"):
+            x = first[first.method == m]
+            fixed.append((f"Fixed {m[6:].replace('-', '/')} (no allocator)", x.symbols.mean(), x.acc.mean()))
+        rows = [{"method": n, "λ": "", "symbols": s, "accuracy": a}
+                for n, s, a in sorted(fixed, key=lambda z: -z[1])]
+        curves = {}
+        for conf in (False, True):
+            label = "Learned allocator + confidence" if conf else "Learned allocator"
+            pts = []
+            for lam in self.s.lambda_grid:
+                name = self.s.rate_name(lam, conf)
+                if not self._done(name):
+                    continue
+                a = self.load(name, lam=lam)
+                a = a[a.method == "allocator"]
+                pts.append((a.symbols.mean(), a.acc.mean()))
+                rows.append({"method": label, "λ": f"{lam:g}", "symbols": pts[-1][0], "accuracy": pts[-1][1]})
+            if pts:
+                curves[label] = pts
+        table(pd.DataFrame(rows), f"Accuracy vs symbols, cap {self.s.rate_cap} (test)", 2)
+        fpts = [(s, a) for _, s, a in fixed]
+        lo = max(min(a for _, a in p) for p in [fpts, *curves.values()])
+        hi = min(max(a for _, a in p) for p in [fpts, *curves.values()])
+        targets = np.round(np.linspace(lo + 0.1 * (hi - lo), hi - 0.02 * (hi - lo), 5), 1)
+        trows = []
+        for tg in targets:
+            r = {"target accuracy (%)": tg, "fixed splits": symbols_for(fpts, tg)}
+            for label, p in curves.items():
+                r[label] = symbols_for(p, tg)
+            best = np.nanmin([r[label] for label in curves])
+            r["saving (%)"] = (1 - best / r["fixed splits"]) * 100
+            trows.append(r)
+        t = pd.DataFrame(trows)
+        table(t, "Symbols per sentence needed to reach a target accuracy (along each curve)", 1)
+        lo_s, hi_s = t["saving (%)"].min(), t["saving (%)"].max()
+        self.note(f"Variable rate (cap {self.s.rate_cap}): to reach the same accuracy as fixed splits, the "
+                  f"allocator changes the symbols needed by {-hi_s:+.0f} to {-lo_s:+.0f}% (negative = fewer).")
+        lam = 0.01 if 0.01 in self.s.lambda_grid else self.s.lambda_grid[len(self.s.lambda_grid) // 2]
+        d = self.load(self.s.rate_name(lam), lam=lam)
+        f, a = d[d.method == "fixed:3-3-2"], d[d.method == "allocator"]
+        per = pd.DataFrame({"fixed 3/3/2: symbols": f.groupby("snr_db").symbols.mean(),
+                            "fixed 3/3/2: accuracy": f.groupby("snr_db").acc.mean(),
+                            "allocator: symbols": a.groupby("snr_db").symbols.mean(),
+                            "allocator: accuracy": a.groupby("snr_db").acc.mean()}).reset_index()
+        table(per.rename(columns={"snr_db": "SNR (dB)"}), f"Per SNR at λ = {lam:g} (test)", 1)
+        fig, ax = plt.subplots(figsize=(6.8, 4.3))
+        fs = sorted(fpts)
+        ax.scatter([s for s, _ in fs], [a for _, a in fs], color=COLOR["equal"], zorder=3,
+                   label="fixed splits (no allocator)")
+        for (label, p), c in zip(curves.items(), (COLOR["allocator"], COLOR["embed"])):
+            p = sorted(p)
+            ax.plot([s for s, _ in p], [a for _, a in p], marker="o", color=c, label=label)
+        ax.set_xlabel("average symbols per sentence"); ax.set_ylabel("mean accuracy (%)")
+        ax.set_title(f"Accuracy vs bandwidth, cap {self.s.rate_cap} (test)"); ax.legend(fontsize=8)
+        self.save(fig, "3_rate")
+
+    # ── A4. priority (gain vs embedding) and the fixed-priority check ────────
+    def priority(self):
+        super().priority()
+        if not self._done(self.s.FIXED_PRIORITY):
+            return
+        fp = self.load(self.s.FIXED_PRIORITY)
+        fp = fp[fp.method == "allocator"]
+        w_e = fp.w_E.iloc[0]
+        g = self.load(self.s.priority_name("gain"))
+        g = g[(g.method == "allocator") & (g.w_E == w_e) & (g.snr_db.isin(fp.snr_db.unique()))]
+        rows = [{"allocator": f"trained only at w = ({fp.w_S.iloc[0]:g}, {fp.w_F.iloc[0]:g}, {w_e:g})",
+                 "ESG tokens": fp.k_E.mean(), "ESG accuracy": fp.correct_E.mean() * 100,
+                 "weighted accuracy": fp.wacc.mean()},
+                {"allocator": "trained with random priorities (one model for all)",
+                 "ESG tokens": g.k_E.mean(), "ESG accuracy": g.correct_E.mean() * 100,
+                 "weighted accuracy": g.wacc.mean()}]
+        r = self.paired(g, fp, "wacc")
+        snrs = ", ".join(f"{s:g}" for s in fp.snr_db.unique())
+        table(pd.DataFrame(rows), f"One model for every priority? (test, {snrs} dB)")
+        md(f"Weighted accuracy, random-priority model minus fixed-priority model: {ci(r)} points.")
+        self.note(f"A single allocator trained with random priorities vs one trained only at ESG priority "
+                  f"{w_e:g}: weighted accuracy {ci(r)} points.")
+
+    # ── A5. joint training (optional) ────────────────────────────────────────
+    def joint(self):
+        if not self._done(self.s.JOINT):
+            md("Joint-training run not found (it is optional).")
+            return
+        d = self.load(self.s.JOINT)
+        a, e = d[d.method == "allocator"], d[d.method == "equal"]
+        r = self.paired(a, e, "acc")
+        table(pd.DataFrame([{"method": "allocator trained jointly with the pipeline", "task tokens": a.tokens.mean(),
+                             "ESG tokens": a.k_E.mean(), "mean accuracy": a.acc.mean()},
+                            {"method": "equal split (same pipeline)", "task tokens": e.tokens.mean(),
+                             "ESG tokens": e.k_E.mean(), "mean accuracy": e.acc.mean()}]),
+              f"Single-stage (joint) training, cap {self.s.fixed_cap}")
+        md(f"Allocator minus equal split: {ci(r)} points. If the allocator's split stays at the equal split, "
+           f"the joint schedule did not let it learn (the training log shows the selected epoch).")

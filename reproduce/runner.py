@@ -127,7 +127,7 @@ class Study:
     def _alloc(self, cap, lam, allocator=None, priorities=None, snrs=None, splits=("test",),
                policies=("allocator", "equal", "all")):
         return deep_update(self._base(), {
-            "cap": cap, "max_tokens_per_task": max(1, cap // 2), "save_checkpoint": True,
+            "cap": cap, "max_tokens_per_task": min(self.J, max(1, cap // 2)), "save_checkpoint": True,
             "init_checkpoint": os.path.join(self.run_dir(self.PIPELINE), "seed{seed}", "model.pt"),
             "allocator": allocator or {},
             "train": {"allocator_stage": "frozen", "epochs_allocator": 2 if self.smoke else 30,
@@ -199,3 +199,90 @@ class Study:
                     print("   " + line.rstrip())
         if p.returncode != 0:
             raise RuntimeError(f"{name} failed (exit {p.returncode}); see {log}")
+
+
+SWEEP = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+CAP8_VARIANTS = {   # name: (allocator settings, label)
+    "gain":  ({}, "Learned allocator"),
+    "conf":  ({"use_confidence": True}, "Learned allocator + confidence"),
+    "embed": ({"priority_mode": "embed"}, "Learned allocator, priority embedding"),
+}
+
+
+class SmallStudy(Study):
+    """
+    Small token budget (Part A of the notebook): 4 task tokens per task, one channel,
+    no channel-type input, per-task maximum = 4.
+
+      * pipeline: stage 1, nested dropout, saturation curves for k = 1..4
+      * fixed cap 8, lambda = 0: allocator (and its confidence / embedding variants)
+        against the equal, proportional and random splits and the hindsight oracle
+      * variable rate at cap 12: a sweep of the price lambda, with and without confidence
+      * priority: ESG priority swept at 0 dB on the cap-8 allocators (gain vs embedding),
+        and one allocator trained only at w = (0.1, 0.1, 0.8)
+      * optional: the allocator trained jointly with the pipeline (one stage)
+    """
+    PIPELINE = "j4_pipeline"
+
+    def __init__(self, out_root="runs/paper", seeds=(0, 1, 2), channel="AWGN", fixed_cap=8, rate_cap=12,
+                 rate_lambdas=(0.001, 0.003, 0.01, 0.03, 0.1), snrs=SNRS, priority_snrs=(0,),
+                 priority_grid=SWEEP, data_path="data/phrasebank_multitask.parquet", smoke=False):
+        super().__init__(out_root=out_root, seeds=seeds, tokens_per_task=4, caps=(fixed_cap,), main_cap=fixed_cap,
+                         lambda_grid=rate_lambdas, snrs=snrs, priority_snrs=priority_snrs,
+                         priority_grid=priority_grid, ablation=(), data_path=data_path, smoke=smoke,
+                         channel=channel)
+        self.fixed_cap, self.rate_cap = fixed_cap, rate_cap
+
+    @staticmethod
+    def cap8_name(variant):
+        return f"j4_cap8_{variant}"
+
+    @staticmethod
+    def rate_name(lam, conf=False):
+        return f"j4_cap12_lam{lam:g}" + ("_conf" if conf else "")
+
+    @staticmethod
+    def priority_name(mode, lam=None):
+        return f"j4_priority_{mode}"
+
+    FIXED_PRIORITY = "j4_fixed_priority"
+    JOINT = "j4_joint_cap8"
+
+    def _allocator_path(self, name):
+        return os.path.join(self.run_dir(name), "seed{seed}", "allocator.pt")
+
+    def cap8_config(self, variant):
+        cfg = self._alloc(self.fixed_cap, 0.0, allocator=CAP8_VARIANTS[variant][0],
+                          policies=("allocator", "equal", "proportional", "random_matched", "oracle_greedy"))
+        return self._write(self.cap8_name(variant), cfg)
+
+    def rate_config(self, lam, conf=False):
+        cfg = self._alloc(self.rate_cap, lam, allocator={"use_confidence": True} if conf else {},
+                          policies=("allocator", "equal", "fixed:4-3-3", "fixed:3-3-2"))
+        return self._write(self.rate_name(lam, conf), cfg)
+
+    def priority_config(self, mode, lam=None):
+        """Re-evaluates the cap-8 allocator (gain or embed) over the ESG priority sweep."""
+        variant = "gain" if mode == "gain" else "embed"
+        sweep = [[round((1 - w) / 2, 4), round((1 - w) / 2, 4), w] for w in self.priority_grid]
+        cfg = self._alloc(self.fixed_cap, 0.0, allocator=CAP8_VARIANTS[variant][0], priorities=sweep,
+                          snrs=self.priority_snrs, policies=("allocator", "equal", "proportional", "oracle_greedy"))
+        cfg["load_allocator"] = self._allocator_path(self.cap8_name(variant))
+        return self._write(self.priority_name(mode), cfg)
+
+    def fixed_priority_config(self, w=(0.1, 0.1, 0.8)):
+        """One allocator trained (and validated) only at priority w, tested at w."""
+        cfg = self._alloc(self.fixed_cap, 0.0, priorities=[list(w)], snrs=self.priority_snrs,
+                          policies=("allocator", "equal", "proportional", "oracle_greedy"))
+        cfg["train"]["priority"] = {"mode": "fixed", "w": list(w)}
+        return self._write(self.FIXED_PRIORITY, cfg)
+
+    def joint_config(self):
+        """Allocator trained together with the pipeline in one stage (the approach we dropped)."""
+        cfg = deep_update(self._base(), {
+            "cap": self.fixed_cap, "save_checkpoint": False,
+            "train": {"allocator_stage": "joint", "epochs_warmup": 1 if self.smoke else 4,
+                      "epochs_allocator": 1 if self.smoke else 8, "lambda": 0.0},
+            "eval": {"policies": ["allocator", "equal"], "splits": ["test"]},
+        })
+        return self._write(self.JOINT, cfg)

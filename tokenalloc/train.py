@@ -180,6 +180,9 @@ def validate_allocator(model, feats, cfg, cap, batch_size):
     """
     cls, task_out, labels = feats
     lam = float(cfg["train"].get("lambda", 0.0))
+    pcfg = cfg["train"].get("priority", {})
+    # validate at the training priority when it is fixed; otherwise at equal priority
+    w_val = sample_priority(pcfg, None) if pcfg.get("mode") == "fixed" else UNIFORM
     lo, hi = cfg["train"].get("snr_range", [-10, 10])
     channels = cfg["train"].get("channels", list(CHANNELS))
     tot = 0.0
@@ -189,7 +192,7 @@ def validate_allocator(model, feats, cfg, cap, batch_size):
         for ch in channels:
             g = eval_generator(cfg["noise_seed"] + 7, ch, 0.0, bi)
             snr = (torch.rand(B, generator=g) * (hi - lo) + lo).to(c.device)
-            w = torch.tensor(UNIFORM, device=c.device).expand(B, 3)
+            w = torch.tensor(w_val, device=c.device, dtype=torch.float32).expand(B, 3)
             out = _allocator_forward(model, c, t, ch, snr, w, cap, generator=g)
             loss = task_loss(out["logits"], y, w, {n: None for n in TASKS})[0].item()
             tot += (loss + lam * out["k"].sum(-1).float().mean().item()) * B
