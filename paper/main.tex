@@ -35,29 +35,30 @@ mas194@mail.aub.edu}
 % ABSTRACT
 % ============================================================
 \begin{abstract}
-When one transmitted sentence must serve several tasks at the
-receiver, how many channel symbols should each task get? We give each
-task its own learnable task tokens inside a FinBERT encoder. Each task
-token is turned into four complex symbols by a channel encoder that
-belongs to that task, and only the first few tokens of each task are
-sent. A small allocator picks how many for every sentence. It looks at a
-summary of the sentence, the average SNR reported by the receiver, the
-channel type and a priority vector set by the operator, and it works
-under a cap on the total number of task tokens and a price per token.
-Priority enters the allocator through a nonnegative gain that depends
-on the context, so a task's score can never go down when its own
-priority goes up. We test the system on a cleaned Financial
-PhraseBank corpus with three tasks (sentiment, forward-looking
-statements and ESG) over AWGN, Rayleigh and Rician channels. Adapting
-the number of tokens to the SNR reaches the accuracy of fixed splits
-with 17 to 30 percent fewer symbols, and on clean channels the
-allocator sends 12 symbols per sentence instead of 48. With 32 task
-tokens per task on AWGN, the allocator matches the accuracy of a fixed
-16-token split with 39 percent fewer symbols. The gain-based priority
-input raises the accuracy of the prioritized task by 1.8 points, while
-a standard priority embedding raises it by only 0.4 points. An input
-ablation shows that the SNR input is essential, the priority input is
-useful and the sentence summary gives a small but significant gain.
+Semantic communication sends the meaning a receiver needs instead of
+an exact copy of the source, which can save many channel symbols. In
+multi-task semantic communication, one transmitted message serves
+several tasks at the receiver at the same time, and these tasks
+compete for a limited number of channel symbols. The best way to share
+them is not fixed: the channel quality changes over time, some
+sentences are harder than others for a given task, and the operator
+may change the importance of each task while the system runs. Systems
+that give each task a fixed share, or always send the same number of
+symbols, waste symbols on clean channels and leave tasks short of
+symbols on noisy ones. We therefore decide, for every sentence and
+before the channel, how many symbols each task receives. Each task
+owns learnable task tokens inside a FinBERT encoder, and only its
+first tokens are sent. A small allocator chooses the number of tokens
+per task from the sentence, the average signal-to-noise ratio reported
+by the receiver and the operator priority, under a total cap and a
+price per token. A nonnegative gain guarantees that raising a task's
+priority never lowers its score. Simulation results on a three-task
+financial corpus over AWGN and Rayleigh fading channels show that the
+allocator reaches the accuracy of fixed splits with about 40 percent
+fewer symbols, and that the proposed priority input steers accuracy
+toward the prioritized task more strongly than a standard priority
+embedding.
+% TODO: update the savings figure with the final AWGN (Colab) and Rayleigh results
 \end{abstract}
 
 \begin{IEEEkeywords}
