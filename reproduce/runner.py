@@ -204,7 +204,6 @@ class Study:
 SWEEP = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
 CAP8_VARIANTS = {   # name: (allocator settings, label)
     "gain":  ({}, "Learned allocator"),
-    "conf":  ({"use_confidence": True}, "Learned allocator + confidence"),
     "embed": ({"priority_mode": "embed"}, "Learned allocator, priority embedding"),
 }
 
@@ -215,9 +214,9 @@ class SmallStudy(Study):
     no channel-type input, per-task maximum = 4.
 
       * pipeline: stage 1, nested dropout, saturation curves for k = 1..4
-      * fixed cap 8, lambda = 0: allocator (and its confidence / embedding variants)
+      * fixed cap 8, lambda = 0: allocator (gain form, and the priority-embedding variant)
         against the equal, proportional and random splits and the hindsight oracle
-      * variable rate at cap 12: a sweep of the price lambda, with and without confidence
+      * variable rate at cap 12: a sweep of the price lambda (one allocator per lambda)
       * priority: ESG priority swept at 0 dB on the cap-8 allocators (gain vs embedding),
         and one allocator trained only at w = (0.1, 0.1, 0.8)
       * optional: the allocator trained jointly with the pipeline (one stage)
