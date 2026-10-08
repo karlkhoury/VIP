@@ -68,7 +68,9 @@ def ci(r, digits=2):
 class Report:
     def __init__(self, study, prefix=""):
         self.s = study
-        self.prefix = prefix                      # figure-name prefix (e.g. "A_" for the small budget)
+        # figure-name prefix: "A_" for the small budget, plus the stage-2 version tag if any
+        tag = getattr(study, "tag", "").strip("_")
+        self.prefix = prefix + (f"{tag}_" if tag else "")
         self.fig_dir = os.path.join(study.out_root, "report")
         os.makedirs(self.fig_dir, exist_ok=True)
         self.lam = None

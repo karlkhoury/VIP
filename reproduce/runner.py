@@ -48,10 +48,15 @@ class Study:
                  epsilon=0.25, snrs=SNRS, priority_snrs=(-10, -5, 0),
                  priority_grid=(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9),
                  ablation=tuple(ABLATION), data_path="data/phrasebank_multitask.parquet",
-                 smoke=False, channel="AWGN"):
+                 smoke=False, channel="AWGN", tag="", alloc_epochs=30, val_draws=1):
         if channel not in CHANNELS:
             raise ValueError(f"channel must be one of {CHANNELS}")
         self.channel = channel
+        # stage-2 version: `tag` is appended to every allocator run name (the stage-1
+        # pipeline is shared), so a new training recipe never reuses or overwrites old runs
+        self.tag = tag
+        self.alloc_epochs = alloc_epochs
+        self.val_draws = val_draws
         self.out_root = out_root
         self.seeds = list(seeds)
         self.J = tokens_per_task
@@ -71,17 +76,14 @@ class Study:
     # ── names ────────────────────────────────────────────────────────────────
     PIPELINE = "pipeline"
 
-    @staticmethod
-    def alloc_name(cap, lam, tag=""):
-        return f"cap{cap}_lam{lam:g}{tag}"
+    def alloc_name(self, cap, lam):
+        return f"cap{cap}_lam{lam:g}{self.tag}"
 
-    @staticmethod
-    def ablation_name(variant, lam):
-        return f"ablation_{variant}_lam{lam:g}"
+    def ablation_name(self, variant, lam):
+        return f"ablation_{variant}_lam{lam:g}{self.tag}"
 
-    @staticmethod
-    def priority_name(mode, lam):
-        return f"priority_{mode}_lam{lam:g}"
+    def priority_name(self, mode, lam):
+        return f"priority_{mode}_lam{lam:g}{self.tag}"
 
     def run_dir(self, name):
         return os.path.join(self.out_root, name)
@@ -130,8 +132,8 @@ class Study:
             "cap": cap, "max_tokens_per_task": min(self.J, max(1, cap // 2)), "save_checkpoint": True,
             "init_checkpoint": os.path.join(self.run_dir(self.PIPELINE), "seed{seed}", "model.pt"),
             "allocator": allocator or {},
-            "train": {"allocator_stage": "frozen", "epochs_allocator": 2 if self.smoke else 30,
-                      "lr_allocator": 1.0e-3, "lambda": float(lam)},
+            "train": {"allocator_stage": "frozen", "epochs_allocator": 2 if self.smoke else self.alloc_epochs,
+                      "lr_allocator": 1.0e-3, "lambda": float(lam), "val_draws": self.val_draws},
             "eval": {"policies": list(policies), "splits": list(splits),
                      "priorities": priorities or [EQUAL_W], **({"snrs": list(snrs)} if snrs else {})},
         })
@@ -225,26 +227,27 @@ class SmallStudy(Study):
 
     def __init__(self, out_root="runs/paper", seeds=(0, 1, 2), channel="AWGN", fixed_cap=8, rate_cap=12,
                  rate_lambdas=(0.001, 0.003, 0.01, 0.03, 0.1), snrs=SNRS, priority_snrs=(0,),
-                 priority_grid=SWEEP, data_path="data/phrasebank_multitask.parquet", smoke=False):
+                 priority_grid=SWEEP, data_path="data/phrasebank_multitask.parquet", smoke=False,
+                 tag="", alloc_epochs=30, val_draws=1):
         super().__init__(out_root=out_root, seeds=seeds, tokens_per_task=4, caps=(fixed_cap,), main_cap=fixed_cap,
                          lambda_grid=rate_lambdas, snrs=snrs, priority_snrs=priority_snrs,
                          priority_grid=priority_grid, ablation=(), data_path=data_path, smoke=smoke,
-                         channel=channel)
+                         channel=channel, tag=tag, alloc_epochs=alloc_epochs, val_draws=val_draws)
         self.fixed_cap, self.rate_cap = fixed_cap, rate_cap
 
-    @staticmethod
-    def cap8_name(variant):
-        return f"j4_cap8_{variant}"
+    def cap8_name(self, variant):
+        return f"j4_cap8_{variant}{self.tag}"
 
-    @staticmethod
-    def rate_name(lam, conf=False):
-        return f"j4_cap12_lam{lam:g}" + ("_conf" if conf else "")
+    def rate_name(self, lam, conf=False):
+        return f"j4_cap12_lam{lam:g}" + ("_conf" if conf else "") + self.tag
 
-    @staticmethod
-    def priority_name(mode, lam=None):
-        return f"j4_priority_{mode}"
+    def priority_name(self, mode, lam=None):
+        return f"j4_priority_{mode}{self.tag}"
 
-    FIXED_PRIORITY = "j4_fixed_priority"
+    @property
+    def FIXED_PRIORITY(self):
+        return f"j4_fixed_priority{self.tag}"
+
     JOINT = "j4_joint_cap8"
 
     def _allocator_path(self, name):

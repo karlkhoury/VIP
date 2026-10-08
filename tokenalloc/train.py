@@ -185,18 +185,22 @@ def validate_allocator(model, feats, cfg, cap, batch_size):
     w_val = sample_priority(pcfg, None) if pcfg.get("mode") == "fixed" else UNIFORM
     lo, hi = cfg["train"].get("snr_range", [-10, 10])
     channels = cfg["train"].get("channels", list(CHANNELS))
+    # each validation sentence is scored at `val_draws` fixed random SNR/noise draws, so
+    # the epoch choice is not decided by the noise of a single draw (default 1 = as before)
+    draws = int(cfg["train"].get("val_draws", 1))
     tot = 0.0
     for bi, s in enumerate(range(0, cls.shape[0], batch_size)):
         c, t, y = cls[s:s + batch_size], task_out[s:s + batch_size], labels[s:s + batch_size]
         B = c.shape[0]
         for ch in channels:
-            g = eval_generator(cfg["noise_seed"] + 7, ch, 0.0, bi)
-            snr = (torch.rand(B, generator=g) * (hi - lo) + lo).to(c.device)
-            w = torch.tensor(w_val, device=c.device, dtype=torch.float32).expand(B, 3)
-            out = _allocator_forward(model, c, t, ch, snr, w, cap, generator=g)
-            loss = task_loss(out["logits"], y, w, {n: None for n in TASKS})[0].item()
-            tot += (loss + lam * out["k"].sum(-1).float().mean().item()) * B
-    return tot / (cls.shape[0] * len(channels))
+            for r in range(draws):
+                g = eval_generator(cfg["noise_seed"] + 7 + 1000 * r, ch, 0.0, bi)
+                snr = (torch.rand(B, generator=g) * (hi - lo) + lo).to(c.device)
+                w = torch.tensor(w_val, device=c.device, dtype=torch.float32).expand(B, 3)
+                out = _allocator_forward(model, c, t, ch, snr, w, cap, generator=g)
+                loss = task_loss(out["logits"], y, w, {n: None for n in TASKS})[0].item()
+                tot += (loss + lam * out["k"].sum(-1).float().mean().item()) * B
+    return tot / (cls.shape[0] * len(channels) * draws)
 
 
 def train_allocator_frozen(model, loaders, class_w, cfg, seed, device, log):
