@@ -1,0 +1,144 @@
+% Results and conclusion text removed from main.tex on 2026-10-19 (AWGN numbers from the
+% first stage-2 recipe; small budget, ablation and priority-embedding comparison).
+
+% ============================================================
+% IV. RESULTS
+% ============================================================
+\section{Results}
+\label{sec:results}
+
+\subsection{When Extra Tokens Help}
+\label{ssec:saturation}
+
+Without an allocator, sending four tokens per task instead of one adds
+13 to 23 points of accuracy per task at $-10$\,dB on AWGN and 11 to 17
+points on Rayleigh. The gain disappears from 5\,dB upward on AWGN,
+while deep fades keep extra tokens useful up to 5\,dB on Rayleigh. With
+the large budget, coming within 0.5 points of the best accuracy needs
+29 tokens per task at $-15$\,dB but one from 5\,dB upward on AWGN, and
+31 tokens at $-15$\,dB, 5 at 5\,dB and one only at 20\,dB on Rayleigh.
+A fixed number of tokens therefore either wastes symbols on clean
+channels or starves noisy ones.
+
+\subsection{Small Budget}
+\label{ssec:small}
+
+With $K{=}8$ and $\lambda{=}0$, every method sends about 32 symbols and
+the methods differ only in how they split the eight tokens. The learned
+allocator is the best practical method, with $+0.29$ points over the
+equal split on AWGN (95\% CI $[0.18, 0.41]$) and $+0.16$ points
+($[0.03, 0.30]$) on Rayleigh, where the priority embedding does equally
+well. The random split is worse than the equal split on both channels,
+so how the tokens are split matters. The hindsight oracle, which knows
+the labels and the noise, is 4.0 (AWGN) and 5.2 (Rayleigh) points above
+the equal split.
+
+With $K{=}12$ the cap no longer binds, and five prices
+$\lambda \in \{0.001, 0.003, 0.01, 0.03, 0.1\}$ trace accuracy against
+symbols. For the same accuracy, the allocator needs 21 to 37 percent
+fewer symbols than fixed splits on AWGN and 9 to 19 percent fewer on
+Rayleigh. The savings come from following the SNR
+(Fig.~\ref{fig:persnr}): at $\lambda{=}0.01$ the allocator sends 46.5
+symbols at $-15$\,dB and 12.0 at 20\,dB on AWGN (48.0 and 15.3 on
+Rayleigh), against a constant 32 for the 3/3/2 split. At low SNR it
+spends more and gains 4 to 5 points; from 10\,dB upward it sends 12 to
+19 symbols and stays within 0.4 points of the fixed split.
+
+\begin{figure}[!t]
+  \centering
+  \includegraphics[width=\columnwidth]{per_snr.pdf}
+  \caption{Symbols sent (left) and mean accuracy (right) against SNR,
+           $J{=}4$, $K{=}12$, $\lambda{=}0.01$, mean of 3 seeds. The
+           fixed 3/3/2 split always sends 32 symbols.}
+  \label{fig:persnr}
+\end{figure}
+
+\subsection{Large Budget}
+\label{ssec:large}
+
+The validation rule selects $\lambda{=}0.005$ on both channels. On the
+test set, the allocator at $K{=}16$ sends 46 percent fewer symbols than
+the equal split on AWGN (34.4 against 64) for $-0.11$ points
+($[-0.21, -0.01]$), which passes the non-inferiority test. On Rayleigh
+it sends 26 percent fewer (47.1 against 64) for $-0.24$ points
+($[-0.35, -0.12]$); this price sat exactly at the margin on validation,
+and the test misses non-inferiority by 0.1 points. One price lower,
+the Rayleigh allocator saves 15 percent for $-0.04$ points. Sending all
+384 symbols is more accurate, by 2.88 (AWGN) and 4.89 (Rayleigh)
+points, almost entirely at $-15$ and $-10$\,dB, where the cap of 16
+limits both the equal split and the allocator. From 10\,dB upward all
+three systems are within 0.3 points, and the allocator sends 12 to 13
+symbols on AWGN and 17 to 29 on Rayleigh instead of 64. On both
+channels the allocator lies above the no-allocator curve at every
+number of symbols (Fig.~\ref{fig:tradeoff}), and the saving grows with
+the cap: 7, 46, 65 and 81 percent at caps 8, 16, 32 and 64 on AWGN,
+and 1, 26, 49 and 72 percent on Rayleigh, at a cost of 0.6 to 2.0
+points at the two largest caps.
+
+\begin{figure}[!t]
+  \centering
+  \includegraphics[width=\columnwidth]{tradeoff.pdf}
+  \caption{Mean accuracy against symbols per sentence, $J{=}32$, test
+           set. Grey: no allocator, every task sends $k$ tokens. Blue:
+           the allocator at $K{=}16$ for each price $\lambda$; the
+           circle marks the price selected on validation.}
+  \label{fig:tradeoff}
+\end{figure}
+
+\subsection{Allocator Inputs}
+\label{ssec:ablation}
+
+We train ten allocators with different inputs at $K{=}16$ and the
+selected $\lambda$, two of them with an extra confidence input (the
+normalized entropy of each head on noise-free tokens), and evaluate
+them at equal, ESG-heavy and Sentiment-heavy priorities on the
+objective \eqref{eq:problem} and the weighted accuracy. On AWGN every
+input matters: without the SNR the allocator sends about 51 symbols at
+every SNR, and removing the priority or the sentence summary worsens
+the objective by 0.020 ($[0.017, 0.023]$) and 0.027
+($[0.024, 0.030]$). On Rayleigh the SNR and the priority matter
+(removing the priority costs 0.039, $[0.035, 0.043]$), but the sentence
+summary does not help: without it the objective is 0.007 lower
+($[0.005, 0.009]$). The confidence input does not help on either
+channel.
+
+\subsection{Priority Steering}
+\label{ssec:priority}
+
+We raise the ESG priority from 0.1 to 0.9, with the other two tasks
+sharing the rest equally, and compare the gain form \eqref{eq:score}
+with the priority embedding, with the small budget at 0\,dB ($K{=}8$)
+and the large budget at $-10$ to 0\,dB ($K{=}16$). In all four
+settings, the gain form moves more tokens to ESG and raises ESG
+accuracy more, by a factor of 1.7 to 22: with the large budget, by
+5.76 against 2.55 points on AWGN and 8.27 against 4.99 points on
+Rayleigh. With the small budget, the embedding gives fewer ESG tokens
+to 0.03 percent (AWGN) and 2.2 percent (Rayleigh) of the sentences
+when the ESG priority rises, while the gain form never does, as
+Proposition~\ref{prop:monotone} guarantees. Compared with an allocator
+trained only at $\mathbf{w} = (0.1, 0.1, 0.8)$, the single model
+trained with random priorities is equivalent on AWGN ($-0.08$ points,
+$[-0.31, 0.17]$) and 0.58 points worse on Rayleigh ($[0.11, 1.06]$).
+
+% ============================================================
+% V. CONCLUSION
+% ============================================================
+\section{Conclusion}
+\label{sec:conclusion}
+
+We moved the split between tasks in multi-task semantic communication
+to the transmitter. Each task owns ordered task tokens, and a small
+allocator decides for every sentence how many of them each task sends,
+from the sentence, the average SNR and the priority, under a cap and a
+price per token, with a priority input that provably never works
+against the chosen task. The allocator follows the channel, splits a
+fixed budget better than fixed rules, reaches the accuracy of fixed
+splits with clearly fewer symbols, and steers accuracy toward the
+prioritized task more strongly than a standard priority embedding. The
+FLS and ESG labels come from classifiers, the training SNR range does
+not cover $-15$\,dB, and the transmitter knows the average SNR without
+error. Future work will consider imperfect channel reports, a dataset
+with human labels for every task, and frequency-selective channels,
+where the transmitter could also choose which channel uses carry each
+task.
+

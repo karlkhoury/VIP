@@ -36,16 +36,15 @@ mas194@mail.aub.edu}
 % ============================================================
 \begin{abstract}
 Semantic communication sends the meaning a receiver needs instead of
-an exact copy of the source, which can save many channel symbols. In
-multi-task semantic communication, one transmitted message serves
-several tasks at the receiver at the same time, and these tasks
-compete for a limited number of channel symbols. The best way to share
-them is not fixed: the channel quality changes over time, some
-sentences are harder than others for a given task, and the operator
-may change the importance of each task while the system runs. Systems
-that give each task a fixed share, or always send the same number of
-symbols, waste symbols on clean channels and leave tasks short of
-symbols on noisy ones. We therefore decide, for every sentence and
+an exact copy of the source, saving channel symbols. In multi-task
+semantic communication, one transmitted message serves several tasks
+at the receiver, and these tasks compete for a limited number of
+channel symbols. The best way to share them is not fixed: the channel
+quality changes over time, some sentences are harder than others for a
+given task, and the operator may change the importance of each task at
+run time. Systems that give each task a fixed share, or always send the
+same number of symbols, waste symbols on clean channels and starve
+tasks on noisy ones. We therefore decide, for every sentence and
 before the channel, how many symbols each task receives. Each task
 owns learnable task tokens inside a FinBERT encoder, and only its
 first tokens are sent. A small allocator chooses the number of tokens
@@ -53,12 +52,10 @@ per task from the sentence, the average signal-to-noise ratio reported
 by the receiver and the operator priority, under a total cap and a
 price per token. A nonnegative gain guarantees that raising a task's
 priority never lowers its score. Simulation results on a three-task
-financial corpus over AWGN and Rayleigh fading channels show that the
-allocator reaches the accuracy of fixed splits with about 40 percent
-fewer symbols, and that the proposed priority input steers accuracy
-toward the prioritized task more strongly than a standard priority
-embedding.
-% TODO: update the savings figure with the final AWGN (Colab) and Rayleigh results
+financial corpus show that the allocator keeps the accuracy of an
+equal split with 45 percent fewer symbols on an AWGN channel, sends 26
+percent fewer symbols on a Rayleigh fading channel at a cost of 0.24
+accuracy points, and steers accuracy toward the prioritized task.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -73,189 +70,191 @@ task tokens, adaptive rate, FinBERT.
 \label{sec:intro}
 
 Semantic communication sends the meaning of a message instead of its
-raw bits. The goal is to use fewer channel symbols while keeping the
-downstream tasks accurate \cite{gunduz2023beyond}. Learned systems
-such as DeepSC \cite{xie2021deepsc} and its multi-task versions
-\cite{sheng2024multitask} train the semantic encoder, the channel code
-and the task heads together. When several tasks are answered from the
-same sentence, a practical question appears: how many symbols does
-each task need, for this sentence, on this channel and with this
-priority?
+raw bits, so that fewer channel symbols are needed to keep the
+downstream tasks accurate \cite{gunduz2023beyond}. Learned systems such
+as DeepSC \cite{xie2021deepsc} train the semantic encoder, the channel
+code and the receiver together. Many applications need several answers
+from the same message. A financial sentence, for example, can be read
+at once for its sentiment, for whether it makes a forward-looking
+statement (FLS) and for its environmental, social or governance (ESG)
+topic. Sending one message for all tasks saves symbols, but the tasks
+then compete for the same channel uses, and the best share keeps
+changing: a clean channel needs few symbols while a noisy one needs
+many, a sentence that is easy for one task can be hard for another,
+and the operator may favour one task for a while. A fixed share per
+task, or a fixed number of symbols, wastes symbols when the channel is
+good and starves the important tasks when it is bad.
 
-In our earlier study, the tasks shared one decoded representation, and
-the split between tasks was made after the channel with soft masks.
-This did not work well. Only a hard equal split improved results on
-every channel, and doubling the channel rate without controlling the
-split made accuracy worse. We drew two lessons from it. First, the
-split should be made before the channel, in units that each belong to
-a single task. Second, more symbols do not always help, so the number
-of symbols sent should itself be a decision.
+Multi-task semantic systems share one encoder among the tasks
+\cite{sheng2024multitask, zhang2024udeepsc}. U-DeepSC
+\cite{zhang2024udeepsc} adapts the number of transmitted features to
+the noise level but serves one task per transmission, and Shao
+\emph{et al.} \cite{shao2022learning} adapt the feature length to the
+channel for a single task. In our earlier study, the split between
+tasks was made after the channel, with soft masks on a shared
+representation. Only a hard equal split helped, and doubling the rate
+without controlling the split made accuracy worse. The split should
+therefore be made before the channel, in units owned by one task, and
+the number of symbols should itself be a decision.
 
-This paper puts both lessons into practice. Each task owns learnable
-task tokens inside the encoder. The transmitter sends only the first
-$k_t$ tokens of task $t$, and a small allocator chooses the counts
-$(k_1, \ldots, k_T)$ for every sentence from the sentence, the average
-signal-to-noise ratio (SNR), the channel type and the priority, under
-a total cap and a price per token. The tasks are sentiment analysis,
-forward-looking statement (FLS) detection and environmental, social
-and governance (ESG) classification of financial sentences. Our
-contributions are the following.
+We follow both lessons. Each task owns ordered task tokens inside the
+encoder, and a small allocator decides, for every sentence, how many of
+them each task sends, from the sentence, the average signal-to-noise
+ratio (SNR) and the operator priority, under a total cap and a price
+per token. Our contributions are the following.
 
 \begin{enumerate}
   \item An encoder-side multi-task design. Each task owns ordered task
-        tokens with restricted attention, each token is coded into
-        four complex symbols by a channel encoder of its own task, and
-        the number of tokens per task is fixed before transmission.
-  \item A learned allocator in which priority enters through a
-        nonnegative gain that depends on the context. This guarantees
-        that a task's score never drops when its own priority rises,
-        and in our tests it steers accuracy toward the prioritized
-        task much more than a priority embedding does.
-  \item An evaluation on a cleaned three-task financial corpus over
-        additive white Gaussian noise (AWGN), Rayleigh and Rician
-        channels, with the same noise for
-        every method, three seeds and paired-bootstrap confidence
-        intervals. It covers token saturation, splitting a fixed cap,
-        variable-rate operation, priority steering, larger token
-        budgets and an ablation of every allocator input.
+        tokens with restricted attention, coded by a channel encoder of
+        its own task, and the number of tokens per task is fixed before
+        transmission.
+  \item A learned allocator in which the priority enters through a
+        nonnegative, context-dependent gain. This guarantees that
+        raising a task's priority never lowers its score. The integer
+        counts are trained end to end with a straight-through
+        estimator.
+  \item An evaluation on a three-task financial corpus over AWGN and
+        Rayleigh fading channels, with the same noise for every method,
+        a price chosen on validation data only, three seeds and
+        paired-bootstrap confidence intervals.
 \end{enumerate}
 
 % ============================================================
-% II. SYSTEM MODEL
+% II. SYSTEM MODEL AND TOKEN ALLOCATION
 % ============================================================
-\section{System Model}
+\section{System Model and Token Allocation}
 \label{sec:system}
 
-Fig.~\ref{fig:arch} shows the full pipeline. A sentence $x$ is
-answered for $T{=}3$ tasks: Sentiment (3 classes), FLS (3 classes)
-and ESG (4 classes: environmental, social, governance, none).
+As shown in Fig.~\ref{fig:arch}, the transmitter maps a sentence $s$
+into a stream of complex symbols $\mathbf{x}$, and the receiver answers
+$T{=}3$ tasks from the received signal $\mathbf{y}$: Sentiment (3
+classes), FLS (3 classes) and ESG (4 classes: environmental, social,
+governance, none).
 
 \begin{figure*}[t]
   \centering
-  \includegraphics[width=\textwidth]{architecture.png}
-  \caption{The full pipeline. The transmitter encodes the sentence
-           together with the task tokens, the allocator decides how
-           many task tokens each task sends, and each kept token is
-           coded into four complex symbols. The receiver equalizes the
-           signal, uses the header to split the symbols by task,
-           decodes each token and combines the tokens of each task
-           before its head.}
+  \includegraphics[width=\textwidth]{architecture.pdf}
+  \caption{The full pipeline. The size of the data leaving each block
+           is written above it. The allocator decides how many task
+           tokens each task sends, and only those tokens are coded into
+           channel symbols. The receiver equalizes the signal, uses the
+           header to split the symbols by task, decodes each token and
+           combines the tokens of each task before its head.}
   \label{fig:arch}
 \end{figure*}
 
-\subsection{Task Tokens and Encoder}
+\subsection{Transmitter, Channel and Receiver}
 
-Each task owns $J$ learnable task-token vectors, so there are $TJ$
-task tokens in total. The encoder input is \texttt{[CLS]}, then the
-$TJ$ task tokens, then the word pieces of the sentence. Attention is
-restricted. A task token looks at the words and at the tokens of its
-own task. The words, \texttt{[CLS]} and \texttt{[SEP]} look only at
-the words. The words therefore never see the task tokens, which keeps
-the word processing the same as in the pretrained encoder, and tokens
-of different tasks never share information. The encoder is FinBERT
-\cite{yang2020finbertfls} (\texttt{finbert-pretrain}, 110M parameters,
-hidden size $d{=}768$). We keep the \texttt{[CLS]} output as a summary
-of the sentence and the $TJ$ task-token outputs. The word outputs are
-not used.
+\textit{Semantic encoder:} Each task $t$ owns $J$ learnable task
+tokens, placed after \texttt{[CLS]} and before the word pieces of $s$.
+The encoder is FinBERT \cite{yang2020finbertfls}
+(\texttt{finbert-pretrain}, $d{=}768$) with restricted attention: a
+task token looks at the words and at the tokens of its own task, while
+the words look only at the words. The word processing therefore stays
+as in the pretrained model, and the tasks never share information
+through their tokens. The encoder outputs the \texttt{[CLS]} vector
+$\mathbf{c} \in \mathbb{R}^{d}$, a summary of the sentence, and one
+vector $\mathbf{z}_{t,j} \in \mathbb{R}^{d}$ per task token.
 
-\subsection{Token Selection and Channel Coding}
+\textit{Allocator:} From $\mathbf{c}$, the average SNR $\gamma$ reported
+by the receiver and the priority $\mathbf{w}$, the allocator chooses
+the counts $\mathbf{k} = A_{\theta}(\mathbf{c}, \gamma, \mathbf{w})$,
+with $1 \le k_t \le J_{\max}$ and $\sum_t k_t \le K$
+(Sections~\ref{ssec:problem} and \ref{ssec:allocator}). Task $t$ keeps
+its first $k_t$ tokens; the others are never encoded.
 
-Given counts $k_t \in \{1, \ldots, J\}$, the transmitter keeps the
-first $k_t$ tokens of task $t$ and never sends the others. A channel
-encoder that belongs to task $t$ ($768 \to 256 \to 8$ real values,
-with a rectified linear unit, ReLU) maps each kept token to $L{=}4$ complex symbols, normalized to
-an average energy of one per symbol. A sentence therefore uses
-$N = 4 \sum_t k_t$ symbols. A short header carries the counts and is
-assumed to arrive without errors.
+\textit{Channel encoder and channel:} A channel encoder for each task
+($768 \to 256 \to 8$, with a rectified linear unit, ReLU) maps each kept
+token to $L{=}4$ complex symbols with an average energy of one per
+symbol. The kept tokens of all tasks form a stream of
+$N = 4\sum_t k_t$ symbols \cite{bourtsoulatze2019deep}, preceded by a
+short header that carries $\mathbf{k}$ and is assumed to arrive
+without errors. Unlike DeepSC, where the stream length is fixed
+\cite{xie2021deepsc}, $N$ here depends on the sentence, the channel and
+the priority. The channel is
+\begin{equation}
+  \mathbf{y} = \mathbf{h} \odot \mathbf{x} + \mathbf{n},
+  \label{eq:channel}
+\end{equation}
+where $\odot$ is the element-wise product,
+$\mathbf{n} \sim \mathcal{CN}(\mathbf{0}, \sigma^2 \mathbf{I}_N)$ and
+$\sigma^2 = 10^{-\gamma/10}$. The AWGN channel uses
+$\mathbf{h} = \mathbf{1}$, and the Rayleigh channel draws every entry
+of $\mathbf{h}$ independently from $\mathcal{CN}(0,1)$. The two
+channels are studied separately.
 
-\subsection{Channel and Receiver}
+\textit{Receiver:} The receiver knows $\mathbf{h}$ and applies zero
+forcing, $\hat{\mathbf{x}} = \mathbf{y} \oslash \mathbf{h}$, as in
+DeepSC \cite{xie2021deepsc}. Using the header, it cuts
+$\hat{\mathbf{x}}$ into blocks of four symbols, and a channel decoder
+for each task ($8 \to 256 \to 768$) rebuilds each token. An attention
+pooling layer for each task, with a learned query, combines the
+received tokens of that task and ignores the tokens that were not
+sent, and a linear head gives the prediction. The receiver reports the
+average SNR back as channel quality information (CQI); the allocator
+never sees the fading of individual symbols.
 
-The channel is $y = h x + n$ with $n \sim \mathcal{CN}(0, \sigma^2)$
-and $\sigma^2 = 10^{-\mathrm{SNR}/10}$. The fading is drawn
-independently for each symbol. AWGN uses $h{=}1$, Rayleigh uses
-$h \sim \mathcal{CN}(0,1)$, and Rician uses
-$h = \sqrt{K/(K{+}1)}\,e^{j\theta} + \sqrt{1/(K{+}1)}\,\mathcal{CN}(0,1)$
-with $K{=}4$. All three have $\mathbb{E}|h|^2 = 1$. The receiver knows
-$h$ and applies zero forcing, $\hat{x} = y/h$, as in DeepSC
-\cite{xie2021deepsc}. On AWGN, zero forcing changes nothing. The
-header tells the receiver how to split the symbols back into task
-tokens. A channel decoder for each task ($8 \to 256 \to 768$) rebuilds
-each token. An attention pooling layer for each task, with a learned
-query, combines the received tokens of that task and ignores the
-tokens that were not sent. Finally, one linear layer per task gives
-the prediction.
+\textit{How the blocks are linked:} The counts $\mathbf{k}$ are the only
+interface between the allocator and the rest of the system. At the
+transmitter they decide which task tokens are encoded, and through the
+header they tell the receiver how to cut the stream and which tokens
+each pooling layer may use. Because the tokens are ordered
+(Section~\ref{sec:setup}), the first $k_t$ tokens are the most useful
+ones, so $\mathbf{k}$ alone describes what was sent. The tasks interact
+only through the shared encoder weights and the shared budget of the
+allocator. The pipeline is trained first, with random counts; it is
+then frozen, and only the allocator is trained.
 
-\subsection{Channel Quality Feedback}
-
-The receiver reports the average SNR back to the transmitter as
-channel quality information (CQI). The
-allocator uses this average and the channel type, but never the fading
-of individual symbols. In the simulation, the reported SNR is the true
-SNR of the sentence.
-
-% ============================================================
-% III. ALLOCATION
-% ============================================================
-\section{Token Allocation}
-\label{sec:alloc}
-
-\subsection{Problem}
+\subsection{Allocation Problem}
+\label{ssec:problem}
 
 Let $\mathbf{w} = (w_1, \ldots, w_T)$ be the priorities, with
 $w_t \geq 0$ and $\sum_t w_t = 1$. Given a total cap $K$ and a
 per-task maximum $J_{\max}$, the allocator chooses integer counts that
 minimize
 \begin{equation}
-  \mathbb{E}\Big[\sum_{t=1}^{T} w_t\, \mathrm{CE}_t(k_t)
-              + \lambda \sum_{t=1}^{T} k_t\Big]
-  \quad \text{s.t.} \quad
-  1 \leq k_t \leq J_{\max}, \;\; \sum_t k_t \leq K,
+  \begin{aligned}
+    & \mathbb{E}\Big[\sum_{t=1}^{T} w_t\, \mathrm{CE}_t(k_t)
+                   + \lambda \sum_{t=1}^{T} k_t\Big] \\
+    & \text{s.t.} \quad 1 \leq k_t \leq J_{\max}, \;\; \sum_{t=1}^{T} k_t \leq K,
+  \end{aligned}
   \label{eq:problem}
 \end{equation}
 where $\mathrm{CE}_t(k_t)$ is the cross-entropy of task $t$ when it
 sends $k_t$ tokens and $\lambda \geq 0$ is a price per task token.
 With $\lambda{=}0$ the allocator only moves tokens between tasks under
-the cap. With $\lambda{>}0$ it may also send fewer tokens than the cap
-allows. The cap is an outside resource limit and is not learned.
-
-When each $\mathrm{CE}_t$ has diminishing returns in $k_t$, problem
+the cap; with $\lambda{>}0$ it may also send fewer tokens than the cap
+allows. When each $\mathrm{CE}_t$ has diminishing returns in $k_t$,
 \eqref{eq:problem} is solved by greedy marginal allocation
-\cite{fox1966marginal}: start with one token per task, and keep giving
-the next token to the task with the largest weighted loss reduction
+\cite{fox1966marginal}: starting from one token per task, the next
+token goes to the task with the largest weighted loss reduction
 $w_t\,[\mathrm{CE}_t(k_t) - \mathrm{CE}_t(k_t{+}1)]$, until this
-reduction is no larger than $\lambda$ or a limit is reached. Here
-$\lambda$ acts as the Lagrange multiplier of the symbol budget. We
-apply this rule to the losses of each test sentence, computed with
-its true labels and its actual noise, to get a hindsight oracle. The
-oracle cannot be built in practice and is shown only as an upper
-bound.
+reduction falls below $\lambda$ or a limit is reached. The price
+$\lambda$ thus decides when an extra token is no longer worth
+sending.
 
 \subsection{Learned Allocator}
+\label{ssec:allocator}
 
-The allocator receives the \texttt{[CLS]} output (768 values), the SNR
-in dB divided by 10 and passed through a linear layer with ReLU to 32
-values, the channel type as a one-hot vector passed to 32 values, and
-the priority vector $\mathbf{w}$. As an option it also receives a
-confidence input: for each task, the normalized entropy of that task's
-head when all its tokens go through a noise-free channel. It is
-computed at the transmitter and no gradient flows through it. The
-inputs are joined and passed through one hidden layer of 128 ReLU
-units, which gives a vector $\mathbf{u}$. Two linear layers then give
-a base score $b_t(\mathbf{u})$ and a raw gain $g_t(\mathbf{u})$ for
-each task. The score of task $t$ is
+The \texttt{[CLS]} output $\mathbf{c}$ and the SNR $\gamma/10$, passed
+through a linear layer with ReLU to 32 values, are joined and passed
+through one hidden layer of 128 ReLU units, which gives a vector
+$\mathbf{u}$. Two linear layers then give a base score
+$b_t(\mathbf{u})$ and a raw gain $g_t(\mathbf{u})$ for each task, and
+the score of task $t$ is
 \begin{equation}
   s_t = b_t(\mathbf{u}) + \mathrm{softplus}\big(g_t(\mathbf{u})\big)\, w_t .
   \label{eq:score}
 \end{equation}
 The base score says how many tokens the task needs for this sentence
-and channel. The gain says how much the priority should count in this
-situation. The priority does not enter the hidden layer.
+and channel, and the gain says how much the priority should count in
+this situation. The priority does not enter the hidden layer.
 
 \begin{proposition}
 \label{prop:monotone}
-For any sentence, SNR, channel type and network weights, the score
-$s_t$ in \eqref{eq:score} never decreases when the task's own priority
-$w_t$ increases.
+For any sentence, SNR and network weights, the score $s_t$ in
+\eqref{eq:score} never decreases when the task's own priority $w_t$
+increases.
 \end{proposition}
 \begin{IEEEproof}
 $\mathbf{u}$ does not depend on $\mathbf{w}$, so
@@ -263,519 +262,259 @@ $\partial s_t / \partial w_t = \mathrm{softplus}(g_t(\mathbf{u})) \geq 0$.
 \end{IEEEproof}
 
 Equation \eqref{eq:score} is a varying-coefficient model
-\cite{hastie1993varying}: the score is linear in $w_t$, and both its
-intercept and its slope depend on the context, as in networks that
-produce their own coefficients \cite{alvarezmelis2018senn}. Using
-softplus to keep the slope positive follows \cite{dugas2001softplus},
-and the guarantee is a case of partial monotonicity
-\cite{sill1998monotonic, daniels2010monotone}. A standard design that
-feeds $\mathbf{w}$ into the hidden layer gives no such guarantee. We
-compare with it in Section~\ref{ssec:priority}.
+\cite{hastie1993varying} whose slope is kept positive with softplus
+\cite{dugas2001softplus}, a case of partial monotonicity
+\cite{daniels2010monotone}. Feeding $\mathbf{w}$ into the hidden layer
+instead, as a usual priority embedding does, gives no such
+guarantee.
 
-The scores are turned into counts by fixed steps. The soft counts are
-$c_t = 1 + (J_{\max} - 1)\,\sigma(s_t)$. If $\sum_t c_t > K$, the part
-above one token is scaled down,
+The soft counts are $c_t = 1 + (J_{\max} - 1)\,\sigma(s_t)$. If
+$\sum_t c_t > K$, the part above one token is scaled down,
 $c_t \leftarrow 1 + (c_t - 1)(K - T)/(\sum_j c_j - T)$. The counts are
-then rounded to the nearest integer. If the rounded total is above the
-cap, all counts are rounded down and the remaining tokens go to the
-largest fractional parts, with ties broken by priority. The output
-layers start at zero and the gain bias at $-5$, so training starts from
-an almost equal split for any priority.
-
-Rounding has no useful gradient, so training uses a straight-through
-estimator \cite{bengio2013estimating}. The forward pass uses the
-rounded counts and hard token masks. The backward pass uses the soft
-counts and soft masks $m_{t,j} = \sigma\big((c_t - j + 0.5)/\tau\big)$
-with $\tau = 0.3$. The priorities are drawn at random for each batch,
-$\mathbf{w} \sim \mathrm{Dir}(1,1,1)$, so that one model serves every
-priority at run time, as in loss-conditional training
-\cite{dosovitskiy2020yoto, navon2021pareto}.
+then rounded; if the rounded total exceeds the cap, all counts are
+rounded down and the remaining tokens go to the largest fractional
+parts, with ties broken by priority. The output layers start at zero
+and the gain bias at $-5$, so training starts from an almost equal
+split. Rounding has no useful gradient, so training uses a
+straight-through estimator \cite{bengio2013estimating}: the forward
+pass uses the rounded counts and hard token masks, and the backward
+pass uses the soft counts and the soft masks
+$m_{t,j} = \sigma\big((c_t - j + 0.5)/\tau\big)$ with $\tau = 0.3$. The
+priorities are drawn for each batch from $\mathrm{Dir}(1,1,1)$, so that
+one model serves every priority at run time
+\cite{dosovitskiy2020yoto}.
 
 % ============================================================
-% IV. EXPERIMENTAL SETUP
+% III. EXPERIMENTAL SETUP
 % ============================================================
 \section{Experimental Setup}
 \label{sec:setup}
 
-\subsection{Data}
+\subsection{Data and Training}
 
-We use the Financial PhraseBank \cite{malo2014phrasebank}
-(\texttt{Sentences\_50Agree}, 4,846 sentences) with its human
-sentiment labels. The FLS and ESG labels come from the FinBERT-FLS and
-FinBERT-ESG classifiers \cite{huang2023finbert}, so these two tasks
-contain some label noise. We repair 111 sentences whose accented
-characters were broken by an encoding error. We remove exact
-duplicates (keeping one copy when the labels agree and none when they
-conflict), near-duplicates that differ only in numbers and have
-conflicting sentiment labels, and four fragments shorter than four
-tokens. This leaves 4,825 sentences. The class counts are
-600/2,865/1,360 for negative/neutral/positive sentiment,
-3,715/92/1,018 for not-FLS/nonspecific/specific FLS, and
-299/893/53/3,580 for environmental/social/governance/none ESG.
+We use the Financial PhraseBank \cite{malo2014phrasebank} (sentences
+with at least 50 percent annotator agreement) with its human sentiment
+labels. The FLS and ESG labels come from the FinBERT-FLS and
+FinBERT-ESG classifiers \cite{huang2023finbert} and contain some label
+noise. After repairing 111 encoding errors and removing duplicates,
+conflicting near-duplicates and short fragments, 4,825 sentences
+remain; ESG is strongly imbalanced (3,580 \emph{none}, 53
+\emph{governance}). They are split 70/10/20 into 3,379 training, 480
+validation and 966 test sentences, stratified by the joint label, and
+sentences that differ only in numbers are kept in the same split.
 
-The corpus is split 70/10/20 into 3,379 training, 480 validation and
-966 test sentences. The split is stratified by the joint label of the
-three tasks. Sentences that differ only in numbers are kept in the
-same split, so no sentence template appears in both training and
-test. Every run uses the same split.
-
-\subsection{Training}
-
-Training has two stages. In the first stage, the encoder, task tokens,
-channel encoders and decoders, pooling layers and heads are trained
-for 12 epochs with nested dropout \cite{rippel2014nested}. For every
-sentence and task, a cut-off $j$ is drawn uniformly from
-$\{1, \ldots, J\}$ and only the first $j$ tokens are sent, which
-teaches the first token to carry the most information. The channel
-type is drawn for each batch and the SNR for each sentence, uniformly
-in $[-10, 10]$\,dB. The loss is the sum of the three cross-entropies.
-FLS and ESG use inverse-frequency class weights computed on the
-training split and scaled to an average of one, so no task's loss is
-made smaller than another's. We use AdamW with learning rate
-$2{\times}10^{-5}$ for the encoder and $10^{-3}$ for the rest, batch
-size 16, and keep the epoch with the lowest validation loss.
-
-In the second stage, the pipeline is frozen, the encoder outputs are
-computed once, and only the allocator is trained for 30 epochs (AdamW,
-learning rate $10^{-3}$, batch size 16) on \eqref{eq:problem} with
-random channel, SNR and priority. After each epoch the same objective,
-including $\lambda$ times the number of tokens, is measured on the
-validation split with fixed noise and equal priority, and the best
-epoch is kept. We also tried training the allocator together with the
-pipeline in a single stage; Section~\ref{ssec:fixedcap} explains why we did
-not keep that approach.
+Each channel is trained and tested on its own, in two stages. Stage 1
+trains the encoder, task tokens, channel encoders and decoders, pooling
+layers and heads for 12 epochs with nested dropout
+\cite{rippel2014nested}: for every sentence and task, only a random
+number $j \in \{1, \ldots, J\}$ of first tokens is sent, which teaches
+the first token to carry the most information. The SNR is drawn per
+sentence, uniformly in $[-10, 10]$\,dB, and the loss is the sum of the
+three cross-entropies, with inverse-frequency class weights for FLS
+and ESG. We use AdamW (learning rate $2{\times}10^{-5}$ for the encoder
+and $10^{-3}$ for the rest, batch size 16) and keep the epoch with the
+lowest validation loss. Stage 2 freezes the pipeline and trains only
+the allocator for 80 epochs on \eqref{eq:problem}, with random SNR and
+priority. The kept epoch has the lowest validation objective at equal
+priority, with every validation sentence scored at five fixed SNR and
+noise draws, so that the choice is not decided by the noise of a
+single draw.
 
 \subsection{Evaluation}
 
-The test SNRs are $\{-15, -10, -5, -2, 0, 2, 5, 10, 15, 20\}$\,dB. For
-each test batch, channel and SNR, one fading and noise realization is
-drawn from a fixed seed and used by every method, so all methods see
-exactly the same channel. Every setting is trained with three seeds.
-Accuracy is given per task and as the mean of the three tasks.
-Confidence intervals are paired-bootstrap 95\% intervals with 10,000
-resamples over (seed, channel, SNR, sentence). All baselines run on
-the same frozen pipeline: fixed splits without an allocator, the equal
-split at the cap, the proportional split $\mathrm{round}(K\mathbf{w})$,
-a random split with the same total as the allocator, and the hindsight
-oracle.
+Each task owns $J{=}32$ task tokens (96 in total, at most 384
+symbols) and may send at most $J_{\max}{=}K/2$, so that one task can
+never take the whole cap. The test SNRs are $-15$, $-10$, $-5$, $-2$, 0, 2, 5, 10,
+15 and 20\,dB. For each test batch and SNR, one fading and noise
+realization is drawn from a fixed seed and shared by all methods. Over
+the seeds $S$, the SNRs $\Gamma$ and the test sentences $D$, that is,
+over $M = |S||\Gamma||D|$ cases, the average number of symbols and the
+accuracy of task $t$ are
+\begin{align}
+  \bar N &= \frac{1}{M}\sum_{s,\gamma,i} 4\sum_{t=1}^{T} k_t(i,\gamma,s), \label{eq:symbols}\\
+  \mathrm{Acc}_t &= \frac{100}{M}\sum_{s,\gamma,i} \mathbb{1}\big[\hat y_t(i,\gamma,s) = y_t(i)\big]. \label{eq:acc}
+\end{align}
+The mean accuracy is the unweighted average over the tasks, as in
+multi-task benchmarks \cite{wang2019glue}, cost is measured as the
+average number of transmitted symbols \cite{shao2022learning}, and the
+weighted accuracy $\sum_t w_t \mathrm{Acc}_t$ is used when the priority
+is not equal. Differences between methods are given with
+paired-bootstrap 95\% confidence intervals \cite{koehn2004statistical}
+(10,000 resamples over seed, SNR and sentence). The baselines run on
+the same frozen pipeline without an allocator: every task sends all
+its tokens, or the cap is split equally between the tasks.
 
-We study two token budgets. In the main setting, each task owns $J{=}4$
-tokens (12 task tokens, at most 48 symbols) and all three channels are
-used. In the large-budget setting, each task owns $J{=}32$ tokens
-(96 task tokens), the per-task maximum is $J_{\max} = K/2$, training
-and testing use AWGN only, and the channel-type input is removed.
+The price $\lambda$ is chosen on the validation set only. Among $\lambda \in \{0.001, 0.002, 0.003, 0.005, 0.01, 0.02\}$ at
+$K{=}16$, we keep the one that sends the fewest symbols while staying
+within $\epsilon{=}0.25$ points of the equal split. This is the
+$\epsilon$-constraint form of \eqref{eq:problem}, whose Lagrangian is
+the training loss. The test set then checks the choice with a
+non-inferiority test: the lower end of the confidence interval of the
+accuracy difference must lie above $-\epsilon$.
 
 % ============================================================
-% V. RESULTS
+% IV. RESULTS
 % ============================================================
 \section{Results}
 \label{sec:results}
 
-\subsection{Token Saturation}
+\subsection{When Extra Tokens Help}
 \label{ssec:saturation}
 
-Table~\ref{tab:saturation} shows how much accuracy each task gains
-when it sends four tokens instead of one ($J{=}4$, no allocator). On
-noisy channels every extra token helps, most of all for FLS and ESG.
-On clean channels one token per task is already as good as four: at
-15\,dB the gain is below one point on every channel and task. The
-channels rank as expected at every SNR, with AWGN the easiest, Rician
-in the middle and Rayleigh the hardest. At 15\,dB the accuracy reaches
-about 83 percent for Sentiment, 95 percent for FLS and 88 percent for
-ESG.
+Without an allocator, the number of tokens a task needs depends
+strongly on the channel. To come within 0.5 points of its best
+accuracy, each task needs 29 tokens at $-15$\,dB but a single token
+from 5\,dB upward on AWGN. Deep fades make Rayleigh more demanding: 31
+tokens at $-15$\,dB, 5 at 5\,dB and a single token only at 20\,dB. A
+fixed number of tokens therefore either wastes symbols on clean
+channels or starves noisy ones.
+
+\subsection{Choice of the Price}
+\label{ssec:price}
+
+Table~\ref{tab:price} gives the validation results used to choose
+$\lambda$. A higher price makes the allocator send fewer symbols and
+lose more accuracy. On both channels, $\lambda{=}0.01$ and $0.02$ lose
+more than $\epsilon{=}0.25$ points and are excluded, and
+$\lambda{=}0.005$ is the remaining price with the fewest symbols. It
+is selected on both channels and used in all the results below.
 
 \begin{table}[!t]
   \centering
-  \caption{Accuracy gain (points) from 1 to 4 task tokens per task,
-           $J{=}4$, no allocator, mean of 3 seeds.}
-  \label{tab:saturation}
+  \caption{Choice of the price on the validation set, $K{=}16$.
+           $\Delta$: accuracy difference (points) from the equal split
+           (64 symbols). Prices with $\Delta < -0.25$ are excluded; the
+           selected price (bold) sends the fewest symbols among the rest.}
+  \label{tab:price}
   \footnotesize
-  \begin{tabular}{llccc}
+  \setlength{\tabcolsep}{5pt}
+  \begin{tabular}{lcccc}
     \toprule
-    Channel & SNR (dB) & Sentiment & FLS & ESG \\
-    \midrule
-    \multirow{3}{*}{AWGN}     & $-5$ & $+8.5$  & $+12.5$ & $+13.6$ \\
-                              & $5$  & $+0.2$  & $+0.0$  & $+0.6$ \\
-                              & $15$ & $+0.0$  & $+0.0$  & $+0.6$ \\
-    \midrule
-    \multirow{3}{*}{Rician}   & $-5$ & $+10.0$ & $+14.0$ & $+14.8$ \\
-                              & $5$  & $+0.8$  & $+0.6$  & $+1.0$ \\
-                              & $15$ & $-0.1$  & $+0.1$  & $+0.6$ \\
-    \midrule
-    \multirow{3}{*}{Rayleigh} & $-5$ & $+12.5$ & $+18.4$ & $+18.2$ \\
-                              & $5$  & $+3.3$  & $+3.3$  & $+5.1$ \\
-                              & $15$ & $+0.3$  & $+0.6$  & $+0.7$ \\
-    \bottomrule
-  \end{tabular}
-\end{table}
-
-\subsection{Fixed Cap: Splitting Eight Tokens}
-\label{ssec:fixedcap}
-
-With $J{=}4$, $K{=}8$ and $\lambda{=}0$, every method sends about 32
-symbols, and the methods differ only in how they split the eight
-tokens (Table~\ref{tab:cap8}). All practical methods are within 0.25
-points of the equal split. The learned allocator is $0.07$ points
-above the equal split on average (per seed $+0.04$, $+0.20$, $-0.04$).
-With the confidence input it is $0.19$ points above, with the same
-sign on every seed ($+0.18$, $+0.17$, $+0.21$). The allocators move
-accuracy from Sentiment to ESG, where extra tokens help the most.
-
-\begin{table}[!t]
-  \centering
-  \caption{Fixed cap $K{=}8$, $J{=}4$, $\lambda{=}0$. Accuracy (\%)
-           averaged over three channels, ten SNRs and three seeds.}
-  \label{tab:cap8}
-  \footnotesize
-  \setlength{\tabcolsep}{3pt}
-  \resizebox{\columnwidth}{!}{%
-  \begin{tabular}{lccccc}
-    \toprule
-    Method & Symbols & Sent. & FLS & ESG & Mean \\
-    \midrule
-    Equal split 3/3/2 (no allocator) & 32.0 & 78.08 & 89.14 & 79.35 & 82.19 \\
-    Proportional split               & 32.0 & 78.08 & 87.46 & 81.25 & 82.26 \\
-    Random split                     & 31.9 & 77.32 & 88.27 & 80.27 & 81.95 \\
-    Learned allocator                & 31.9 & 77.80 & 88.02 & 80.95 & 82.26 \\
-    Learned allocator + confidence   & 32.0 & 76.97 & 88.94 & 81.21 & 82.37 \\
-    Learned allocator, priority embedding & 31.9 & 77.08 & 88.85 & 80.87 & 82.27 \\
-    \midrule
-    Hindsight oracle (not practical) & 22.9 & 82.61 & 92.54 & 85.85 & 87.00 \\
-    \bottomrule
-  \end{tabular}%
-  }
-\end{table}
-
-There is little to gain from splitting a fixed cap differently. Using
-the measured per-task curves, the best fixed split chosen in hindsight
-for each channel and SNR beats the equal split by at most 0.85 points
-(Rayleigh, $-5$\,dB), and by less than 0.3 points in most cases. The
-much larger margin of the hindsight oracle comes from knowing the
-labels and the noise of each sentence, which no transmitter can know.
-
-When we trained the allocator together with the pipeline in a single
-stage, it stayed at its starting 3/3/2 split (mean accuracy 83.82,
-against 83.79 for the equal split). The pipeline started to overfit
-after two allocator epochs, so the best checkpoint came from a point
-where the allocator had not moved yet. This is why we use the
-two-stage training described in Section~\ref{sec:setup}.
-
-\subsection{Variable Rate}
-\label{ssec:rate}
-
-With $J{=}4$ and $K{=}12$ (so the cap never limits the allocator) and
-five prices $\lambda \in \{0.001, 0.003, 0.01, 0.03, 0.1\}$, the
-allocator chooses the total number of tokens as well as the split.
-Table~\ref{tab:rate} gives accuracy against symbols, and
-Table~\ref{tab:target} gives the number of symbols needed to reach a
-given accuracy. Adapting to the SNR reaches the accuracy of fixed
-splits with 17 to 30 percent fewer symbols. For example, reaching 83.0
-percent takes 39.1 symbols with fixed splits and 27.2 to 27.8 symbols
-with the allocator. At $\lambda{=}0.003$ the allocator uses 36.6
-symbols for 83.70 percent, while sending every token uses 48 symbols
-for 83.75 percent.
-
-\begin{table}[!t]
-  \centering
-  \caption{Accuracy against symbols, $J{=}4$, $K{=}12$, three channels,
-           mean of three seeds.}
-  \label{tab:rate}
-  \footnotesize
-  \setlength{\tabcolsep}{3pt}
-  \begin{tabular}{lccc}
-    \toprule
-    Method & $\lambda$ & Symbols & Accuracy (\%) \\
-    \midrule
-    Fixed 4/4/4 (no allocator) & & 48.0 & 83.75 \\
-    Fixed 4/3/3                & & 40.0 & 83.05 \\
-    Fixed 3/3/3                & & 36.0 & 82.82 \\
-    Fixed 3/3/2                & & 32.0 & 82.19 \\
-    Fixed 2/2/2                & & 24.0 & 81.19 \\
-    Fixed 1/1/1                & & 12.0 & 77.77 \\
-    \midrule
-    \multirow{5}{*}{Learned allocator}
-      & 0.001 & 45.2 & 83.75 \\
-      & 0.003 & 36.6 & 83.70 \\
-      & 0.01  & 29.0 & 83.28 \\
-      & 0.03  & 21.0 & 81.44 \\
-      & 0.1   & 16.3 & 79.89 \\
-    \midrule
-    \multirow{5}{*}{\shortstack[l]{Learned allocator\\+ confidence}}
-      & 0.001 & 46.1 & 83.74 \\
-      & 0.003 & 37.0 & 83.68 \\
-      & 0.01  & 27.5 & 83.08 \\
-      & 0.03  & 20.8 & 81.52 \\
-      & 0.1   & 15.1 & 79.30 \\
-    \bottomrule
-  \end{tabular}
-\end{table}
-
-\begin{table}[!t]
-  \centering
-  \caption{Symbols per sentence needed to reach a target accuracy
-           (interpolated along each method's curve), $J{=}4$, three
-           channels.}
-  \label{tab:target}
-  \footnotesize
-  \setlength{\tabcolsep}{4pt}
-  \begin{tabular}{ccccc}
-    \toprule
-    Target (\%) & Fixed splits & Allocator & Allocator + conf. & Saving \\
-    \midrule
-    81.0 & 23.3 & 19.7 & 19.4 & 17\% \\
-    82.0 & 30.5 & 23.4 & 22.8 & 25\% \\
-    83.0 & 39.1 & 27.8 & 27.2 & 30\% \\
-    83.5 & 45.2 & 33.0 & 34.1 & 27\% \\
-    83.7 & 47.4 & 36.5 & 39.5 & 23\% \\
-    \bottomrule
-  \end{tabular}
-\end{table}
-
-The savings come from following the channel
-(Table~\ref{tab:persnr}). At $\lambda{=}0.01$ the allocator sends 47.6
-symbols at $-15$\,dB and 12.4 symbols at $+20$\,dB, which is the
-minimum of one token per task, while the 3/3/2 split always sends 32.
-It also uses the channel type: at 5\,dB it sends 15.0 symbols on AWGN,
-19.0 on Rician and 27.9 on Rayleigh. At low SNR the allocator spends
-more than the fixed split and gains 3 to 5 points. At high SNR it
-spends 60 percent fewer symbols for the same accuracy.
-
-\begin{table}[!t]
-  \centering
-  \caption{Symbols (Sym.) and accuracy (Acc., \%) per SNR at
-           $\lambda{=}0.01$, $J{=}4$, mean over three channels and
-           three seeds.}
-  \label{tab:persnr}
-  \footnotesize
-  \setlength{\tabcolsep}{4pt}
-  \begin{tabular}{rcccc}
-    \toprule
-    & \multicolumn{2}{c}{Fixed 3/3/2} & \multicolumn{2}{c}{Allocator} \\
+    & \multicolumn{2}{c}{AWGN} & \multicolumn{2}{c}{Rayleigh} \\
     \cmidrule(lr){2-3}\cmidrule(lr){4-5}
-    SNR (dB) & Sym. & Acc. & Sym. & Acc. \\
+    $\lambda$ & Symbols & $\Delta$ & Symbols & $\Delta$ \\
     \midrule
-    $-15$ & 32 & 55.8 & 47.6 & 59.1 \\
-    $-10$ & 32 & 69.4 & 46.0 & 73.8 \\
-    $-5$  & 32 & 81.4 & 41.5 & 84.1 \\
-    $0$   & 32 & 87.3 & 30.8 & 87.5 \\
-    $5$   & 32 & 88.4 & 20.6 & 88.2 \\
-    $10$  & 32 & 88.6 & 15.9 & 88.4 \\
-    $20$  & 32 & 88.6 & 12.4 & 88.5 \\
+    0.001 & 49.5 & $+0.06$ & 63.3 & $-0.08$ \\
+    0.002 & 39.9 & $+0.01$ & 62.1 & $-0.03$ \\
+    0.003 & 36.9 & $-0.06$ & 54.5 & $-0.14$ \\
+    \textbf{0.005} & \textbf{35.0} & $\mathbf{+0.04}$ & \textbf{47.0} & $\mathbf{-0.25}$ \\
+    0.01  & 30.2 & $-0.41$ & 41.2 & $-0.90$ \\
+    0.02  & 25.0 & $-1.03$ & 35.9 & $-1.70$ \\
     \bottomrule
   \end{tabular}
 \end{table}
+
+\subsection{The Three Benchmarks}
+\label{ssec:bench}
+
+Table~\ref{tab:bench} compares, on the test set, sending every token
+with no allocator and no cap, the equal split at $K{=}16$ with no
+allocator, and the allocator at $K{=}16$. On AWGN the allocator sends
+45 percent fewer symbols than the equal split (35.1 against 64) with
+no measurable loss of accuracy ($-0.05$ points,
+$[-0.16, +0.06]$), so it passes the non-inferiority test. On Rayleigh
+it sends 26 percent fewer symbols (47.1 against 64) for $-0.24$ points
+($[-0.35, -0.12]$). This price sat exactly at the margin on
+validation, and on the test set it misses the non-inferiority test by
+0.1 points. Sending every token is more accurate, by 2.8 points on
+AWGN and 4.7 points on Rayleigh, but costs 384 symbols per sentence.
+
+\begin{table}[!t]
+  \centering
+  \caption{The three benchmarks on the test set, $J{=}32$, mean of
+           3 seeds and 10 SNRs. Allocator: $K{=}16$, $\lambda{=}0.005$.
+           Sym.: symbols per sentence. $\Delta$: accuracy difference
+           from the equal split (points).}
+  \label{tab:bench}
+  \footnotesize
+  \setlength{\tabcolsep}{3.5pt}
+  \begin{tabular}{lcccccc}
+    \toprule
+    & \multicolumn{3}{c}{AWGN} & \multicolumn{3}{c}{Rayleigh} \\
+    \cmidrule(lr){2-4}\cmidrule(lr){5-7}
+    System & Sym. & Acc. & $\Delta$ & Sym. & Acc. & $\Delta$ \\
+    \midrule
+    All tokens, no cap     & 384  & 87.62 & $+2.76$ & 384  & 86.28 & $+4.66$ \\
+    Equal split, $K{=}16$  & 64   & 84.86 &         & 64   & 81.62 & \\
+    Allocator, $K{=}16$    & 35.1 & 84.81 & $-0.05$ & 47.1 & 81.38 & $-0.24$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Fig.~\ref{fig:bench} shows where the savings come from. The allocator
+sends almost the whole cap at low SNR, where every token helps, and
+lowers its rate as the channel improves: from 64 to 12 symbols per
+sentence on AWGN and from 63 to 17 on Rayleigh, which needs more
+symbols than AWGN at every SNR, as the saturation results predict. At
+every SNR its accuracy stays within 0.6 points of the equal split. The
+advantage of sending every token is concentrated at low SNR ($-15$ and
+$-10$\,dB on AWGN, up to $-5$\,dB on Rayleigh), where the cap of 16
+tokens limits both the equal split and the allocator.
+
+\begin{figure}[!t]
+  \centering
+  \includegraphics[width=\columnwidth]{benchmarks_snr.pdf}
+  \caption{The three benchmarks against SNR, $J{=}32$, test set, mean
+           of 3 seeds: symbols sent (left, log scale) and mean accuracy
+           (right). Color: channel. Line style: system.}
+  \label{fig:bench}
+\end{figure}
+
+\subsection{Effect of the Cap}
+\label{ssec:caps}
+
+Fig.~\ref{fig:caps} repeats the comparison with the equal split for
+caps of 8, 16, 32 and 64 tokens, at the same price. The saving grows
+with the cap, from 26 to 83 percent on AWGN and from 1 to 72 percent
+on Rayleigh, because a larger cap lets the equal split send more
+tokens that the channel does not need. At caps 8 and 16 the accuracy
+is unchanged on AWGN; on Rayleigh, cap 8 is even more accurate than
+the equal split ($+0.27$ points, $[0.11, 0.42]$) because the allocator
+moves tokens between tasks. At caps 32 and 64 the allocator gives up
+0.6 to 2.0 points in exchange for the larger savings.
+
+\begin{figure}[!t]
+  \centering
+  \includegraphics[width=\columnwidth]{caps.pdf}
+  \caption{Allocator against the equal split at every cap $K$,
+           $\lambda{=}0.005$, test set: symbols saved (left) and
+           accuracy difference with 95\% confidence intervals (right).}
+  \label{fig:caps}
+\end{figure}
 
 \subsection{Priority Steering}
 \label{ssec:priority}
 
-To check that the operator's priority really steers the allocation,
-we evaluate the cap-8 models at 0\,dB while raising the ESG priority
-from 0.1 to 0.9, with the other two tasks sharing the rest equally
-(Table~\ref{tab:priority}). With the gain form \eqref{eq:score}, ESG
-tokens rise steadily from 2.27 to 3.59 and ESG accuracy from 85.3 to
-87.1 percent, and no sentence gets fewer ESG tokens when its ESG
-priority goes up. Sentiment and FLS give up 1.2 and 0.9 points. The
-same allocator with the priority fed into the hidden layer moves ESG
-tokens only from 2.67 to 2.87 and ESG accuracy from 86.2 to 86.6
-percent, and 0.7 percent of sentences get fewer ESG tokens when the
-ESG priority goes up. Averaged over the sweep, the priority-weighted
-accuracy is 87.29 percent for the allocator and 86.80 percent for the
-equal split. Finally, an allocator trained only at
-$\mathbf{w} = (0.1, 0.1, 0.8)$ reaches 86.8 percent ESG accuracy at
-that priority, against 86.9 percent for the allocator trained with
-random priorities. One model therefore serves every priority without
-retraining.
+To check that the operator's priority steers the allocation, we raise
+the ESG priority from 0.1 to 0.9, with the other two tasks sharing the
+rest equally, at $-10$, $-5$ and 0\,dB and $K{=}16$. The average
+number of ESG tokens rises from 3.5 to 7.0 on AWGN and from 4.0 to 7.6
+on Rayleigh, and the ESG accuracy rises by 4.59 points
+($[3.98, 5.20]$) and 8.27 points ($[7.50, 9.04]$). No sentence ever
+receives fewer ESG tokens when the ESG priority rises, in line with
+Proposition~\ref{prop:monotone}.
 
-\begin{table}[!t]
-  \centering
-  \caption{Priority sweep at 0\,dB, $K{=}8$, $J{=}4$, three channels,
-           three seeds: mean ESG tokens and ESG accuracy (\%).}
-  \label{tab:priority}
-  \footnotesize
-  \setlength{\tabcolsep}{4pt}
-  \begin{tabular}{lcccc}
-    \toprule
-    & \multicolumn{2}{c}{Gain form \eqref{eq:score}} & \multicolumn{2}{c}{Priority embedding} \\
-    \cmidrule(lr){2-3}\cmidrule(lr){4-5}
-    $w_{\mathrm{ESG}}$ & Tokens & Acc. & Tokens & Acc. \\
-    \midrule
-    0.1 & 2.27 & 85.3 & 2.67 & 86.2 \\
-    0.5 & 3.01 & 86.7 & 2.81 & 86.5 \\
-    0.9 & 3.59 & 87.1 & 2.87 & 86.6 \\
-    \bottomrule
-  \end{tabular}
-\end{table}
+% ============================================================
+% V. CONCLUSION
+% ============================================================
+\section{Conclusion}
+\label{sec:conclusion}
 
-\subsection{Larger Token Budgets on a Gaussian Channel}
-\label{ssec:awgn}
-
-To check that the pipeline and the allocator work over a wide range of
-budgets, each task gets $J{=}32$ tokens (96 task tokens), training and
-testing use AWGN only, the channel-type input is removed, and the cap
-takes the values $K \in \{8, 16, 32, 64\}$ with per-task maximum
-$J_{\max} = K/2$. Without an allocator, accuracy grows steadily with
-the number of tokens per task: 78.74 percent with one token
-(12 symbols), 84.11 with four (48), 86.88 with sixteen (192) and 87.55
-with all 32 (384 symbols). Most of the late gain comes from very low
-SNR. At $-15$\,dB accuracy grows from 47.8 to 81.7 percent between one
-and 32 tokens per task, while from 5\,dB upward two tokens per task
-are already as good as 32 (88.3 percent at 5\,dB).
-
-Table~\ref{tab:awgn} compares sending every token, the equal split at
-each cap and the learned allocator. At $K{=}16$ the allocator reaches
-84.65 percent with 39.1 symbols, while the equal split reaches 84.73
-percent with 64 symbols. This is 39 percent fewer symbols for the
-same accuracy. At $K{=}32$ and $K{=}64$ it saves 63 and 80 percent of
-the symbols and loses 0.6 and 1.4 points. At $\lambda{=}0.01$ the
-savings grow to 76 and 87 percent. On clean channels (10\,dB and
-above) it sends 12 to 16 symbols at caps 16, 32 and 64
-(Table~\ref{tab:awgn16}). At $K{=}8$ with $\lambda{=}0.003$ the
-allocator still sends about 32 symbols at every SNR, so this price is
-too low to save symbols at that cap. At $\lambda{=}0.01$ it sends 22.1
-symbols.
-
-\begin{table}[!t]
-  \centering
-  \caption{AWGN, $J{=}32$, per-task maximum $K/2$, mean of three seeds.
-           Sending every token uses 384 symbols for 87.55\% accuracy.}
-  \label{tab:awgn}
-  \footnotesize
-  \setlength{\tabcolsep}{3pt}
-  \resizebox{\columnwidth}{!}{%
-  \begin{tabular}{ccccccc}
-    \toprule
-    & \multicolumn{2}{c}{Equal split at $K$} & \multicolumn{2}{c}{Allocator, $\lambda{=}0.003$} & \multicolumn{2}{c}{Allocator, $\lambda{=}0.01$} \\
-    \cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}
-    Cap $K$ & Sym. & Acc. & Sym. & Acc. & Sym. & Acc. \\
-    \midrule
-    8  & 32  & 82.67 & 31.8 & 82.71 & 22.1 & 82.51 \\
-    16 & 64  & 84.73 & 39.1 & 84.65 & 29.6 & 84.28 \\
-    32 & 128 & 86.19 & 47.5 & 85.60 & 31.0 & 84.38 \\
-    64 & 256 & 87.24 & 52.3 & 85.81 & 33.0 & 84.71 \\
-    \bottomrule
-  \end{tabular}%
-  }
-\end{table}
-
-\begin{table}[!t]
-  \centering
-  \caption{AWGN, $K{=}16$ ($J_{\max}{=}8$): symbols (Sym.) and accuracy
-           (Acc., \%) per SNR, mean of three seeds.}
-  \label{tab:awgn16}
-  \footnotesize
-  \setlength{\tabcolsep}{3pt}
-  \resizebox{\columnwidth}{!}{%
-  \begin{tabular}{rcccccc}
-    \toprule
-    & \multicolumn{2}{c}{All tokens, no cap} & \multicolumn{2}{c}{Equal split, $K{=}16$} & \multicolumn{2}{c}{Allocator, $\lambda{=}0.003$} \\
-    \cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}
-    SNR (dB) & Sym. & Acc. & Sym. & Acc. & Sym. & Acc. \\
-    \midrule
-    $-15$ & 384 & 81.7 & 64 & 63.3 & 62.6 & 63.3 \\
-    $-10$ & 384 & 87.5 & 64 & 79.6 & 62.9 & 79.5 \\
-    $-5$  & 384 & 88.3 & 64 & 86.9 & 60.9 & 86.8 \\
-    $0$   & 384 & 88.3 & 64 & 88.0 & 46.3 & 87.9 \\
-    $5$   & 384 & 88.3 & 64 & 88.4 & 25.9 & 88.3 \\
-    $10$  & 384 & 88.3 & 64 & 88.5 & 15.9 & 88.4 \\
-    $20$  & 384 & 88.2 & 64 & 88.4 & 12.1 & 88.3 \\
-    \bottomrule
-  \end{tabular}%
-  }
-\end{table}
-
-At the larger caps, the accuracy the allocator loses is concentrated
-at $-15$ and $-10$\,dB. At $K{=}64$ and $\lambda{=}0.003$ it sends 127
-symbols at $-15$\,dB for 70.4 percent, while the equal split sends 256
-symbols for 78.5 percent. The training SNR range, $[-10, 10]$\,dB,
-does not include $-15$\,dB.
-
-\subsection{Allocator Input Ablation}
-\label{ssec:ablation}
-
-To measure what each input brings, we train ten allocators with
-different inputs on the AWGN pipeline at $K{=}16$, $J_{\max}{=}8$ and
-$\lambda{=}0.003$. We evaluate them at three priorities: equal,
-ESG-heavy $(0.1, 0.1, 0.8)$ and Sentiment-heavy $(0.8, 0.1, 0.1)$
-(Table~\ref{tab:ablation}). The objective is the quantity minimized in
-training, the priority-weighted cross-entropy plus $\lambda$ times the
-number of tokens, measured on the test set. With AWGN only, the
-channel type never changes, so it is not an input here.
-
-\begin{table*}[!t]
-  \centering
-  \caption{Allocator input ablation, AWGN, $K{=}16$, $J_{\max}{=}8$,
-           $\lambda{=}0.003$, three seeds. Objective: lower is better.
-           Accuracy is at equal priority. Weighted accuracy is
-           averaged over the three priorities. ESG tokens are given at
-           equal and at ESG-heavy priority.}
-  \label{tab:ablation}
-  \footnotesize
-  \begin{tabular}{lcccccccc}
-    \toprule
-    Allocator inputs & Objective & Symbols & Accuracy (\%) & Weighted acc. (\%) & Sym. at $-10$\,dB & Sym. at $+20$\,dB & ESG tokens, $w_{\mathrm{E}}{=}0.33$ & ESG tokens, $w_{\mathrm{E}}{=}0.8$ \\
-    \midrule
-    CLS + SNR + priority              & 0.571 & 38.7 & 84.65 & 83.47 & 62.9 & 12.1 & 3.40 & 4.60 \\
-    CLS + SNR + priority + confidence & 0.569 & 37.0 & 84.65 & 83.49 & 63.3 & 12.4 & 3.38 & 4.63 \\
-    SNR + priority                    & 0.582 & 38.3 & 84.74 & 83.32 & 62.7 & 12.0 & 3.53 & 3.77 \\
-    SNR + priority + confidence       & 0.573 & 41.9 & 84.69 & 83.41 & 64.0 & 12.0 & 3.75 & 4.69 \\
-    CLS + SNR                         & 0.581 & 39.1 & 84.66 & 83.21 & 63.5 & 12.1 & 3.41 & 3.41 \\
-    SNR only                          & 0.583 & 38.8 & 84.68 & 83.22 & 62.7 & 12.0 & 3.53 & 3.53 \\
-    CLS + priority                    & 0.606 & 58.5 & 84.45 & 83.01 & 58.5 & 58.5 & 5.46 & 5.54 \\
-    CLS only                          & 0.611 & 57.7 & 84.36 & 82.85 & 57.7 & 57.7 & 5.22 & 5.22 \\
-    Priority only                     & 0.605 & 57.3 & 84.53 & 83.06 & 57.3 & 57.3 & 5.00 & 5.00 \\
-    No input                          & 0.610 & 57.3 & 84.53 & 82.99 & 57.3 & 57.3 & 5.00 & 5.00 \\
-    \midrule
-    Equal split 6/5/5 (no allocator)  & 0.597 & 64.0 & 84.73 & 83.24 & 64.0 & 64.0 & 5.00 & 5.00 \\
-    \bottomrule
-  \end{tabular}
-\end{table*}
-
-\emph{The SNR input is essential.} Without it the allocator cannot
-change its rate: it sends about 58 symbols at every SNR, its objective
-is worse by 0.034 to 0.039 (paired 95\% intervals exclude zero) and
-its weighted accuracy is lower by 0.40 to 0.61 points. With the SNR
-input, the allocator goes from about 63 symbols at $-10$\,dB to 12 at
-$+20$\,dB.
-
-\emph{The priority input is useful.} Without it, ESG tokens do not
-change when ESG is prioritized. Removing it from the full allocator
-worsens the objective by 0.010 ($[0.008, 0.012]$) and lowers the
-weighted accuracy by 0.26 points ($[-0.34, -0.18]$). With it, ESG
-tokens rise from 3.40 to 4.60 and ESG accuracy from 82.6 to 83.6
-percent under ESG priority.
-
-\emph{The sentence summary gives a small but significant gain.} It is
-the only input that makes the allocation differ between sentences at
-the same SNR and priority (a standard deviation of about 1.5 tokens,
-against zero without it). Removing it worsens the objective by 0.011
-($[0.009, 0.014]$) and lowers the weighted accuracy by 0.14 points
-($[-0.23, -0.05]$). Without the sentence summary, the response to
-priority is also much weaker (ESG tokens 3.53 to 3.77).
-
-\emph{The confidence input adds very little.} Added to the full
-allocator, it lowers the objective by 0.002 ($[-0.0035, -0.0006]$) and
-the number of symbols by 1.8, with no significant change in weighted
-accuracy.
-
-\subsection{Data Checks and Limitations}
-\label{ssec:limits}
-
-We checked that the training, validation and test splits do not
-overlap and together cover the whole corpus, that no sentence template
-appears in more than one split, that every reported result uses the
-966 test sentences, that the labels stored with each prediction match
-the corpus, and that the class weights use the training split only.
-One test sentence is six word pieces longer than the 128 word-piece
-limit and is cut the same way for every method.
-
-The FLS and ESG labels come from classifiers and contain errors: 161
-FLS and 365 ESG labels have a classifier confidence below 0.6. The
-rarest classes have few test examples (17 nonspecific FLS and 10
-governance ESG sentences), so per-class results for them are
-uncertain. The training SNR range does not cover $-15$\,dB, where the
-allocator sends too few tokens in the large-budget setting. The price
-$\lambda$ was chosen from a sweep, not derived from an accuracy
-target.
+We moved the split between tasks in multi-task semantic communication
+to the transmitter. Each task owns ordered task tokens, and a small
+allocator decides for every sentence how many of them each task sends,
+from the sentence, the average SNR and the priority, under a cap and a
+price per token, with a priority input that provably never works
+against the chosen task. The allocator follows the channel: it sends
+almost the whole cap on noisy channels and few symbols on clean ones.
+It keeps the accuracy of an equal split with 45 percent fewer symbols
+on AWGN, uses 26 percent fewer on Rayleigh fading at a small accuracy
+cost, and steers accuracy toward the prioritized task. The FLS and ESG
+labels come from classifiers, the training SNR range does not cover
+$-15$\,dB, and the transmitter knows the average SNR without error.
+Future work will consider imperfect channel reports, a dataset with
+human labels for every task, and frequency-selective channels, where
+the transmitter could also choose which channel uses carry each task.
 
 % ============================================================
 % REFERENCES
@@ -784,20 +523,23 @@ target.
 \bibitem{gunduz2023beyond} D.~G\"und\"uz \emph{et al.}, ``Beyond transmitting bits: Context, semantics, and task-oriented communications,'' \emph{IEEE J. Sel. Areas Commun.}, vol.~41, no.~1, pp.~5--41, 2023.
 \bibitem{xie2021deepsc} H.~Xie, Z.~Qin, G.~Y. Li, and B.-H. Juang, ``Deep learning enabled semantic communication systems,'' \emph{IEEE Trans. Signal Process.}, vol.~69, pp.~2663--2675, 2021.
 \bibitem{sheng2024multitask} Y.~Sheng, F.~Li, L.~Liang, and S.~Jin, ``A multi-task semantic communication system for natural language processing,'' in \emph{Proc. IEEE VTC-Fall}, 2022, pp.~1--5.
+% TODO verify the final journal version of U-DeepSC before submission
+\bibitem{zhang2024udeepsc} G.~Zhang \emph{et al.}, ``A unified multi-task semantic communication system for multimodal data,'' 2022, arXiv:2209.07689.
+\bibitem{bourtsoulatze2019deep} E.~Bourtsoulatze, D.~Burth Kurka, and D.~G\"und\"uz, ``Deep joint source-channel coding for wireless image transmission,'' \emph{IEEE Trans. Cogn. Commun. Netw.}, vol.~5, no.~3, pp.~567--579, 2019.
+\bibitem{shao2022learning} J.~Shao, Y.~Mao, and J.~Zhang, ``Learning task-oriented communication for edge inference: An information bottleneck approach,'' \emph{IEEE J. Sel. Areas Commun.}, vol.~40, no.~1, pp.~197--211, 2022.
 \bibitem{malo2014phrasebank} P.~Malo, A.~Sinha, P.~Korhonen, J.~Wallenius, and P.~Takala, ``Good debt or bad debt: Detecting semantic orientations in economic texts,'' \emph{J. Assoc. Inf. Sci. Technol.}, vol.~65, no.~4, pp.~782--796, 2014.
 \bibitem{huang2023finbert} A.~H. Huang, H.~Wang, and Y.~Yang, ``FinBERT: A large language model for extracting information from financial text,'' \emph{Contemp. Account. Res.}, vol.~40, no.~2, pp.~806--841, 2023.
 \bibitem{yang2020finbertfls} Y.~Yang, M.~C.~S. Uy, and A.~Huang, ``FinBERT: A pretrained language model for financial communications,'' 2020, arXiv:2006.08097.
 % TODO verify volume and pages before submission
 \bibitem{fox1966marginal} B.~Fox, ``Discrete optimization via marginal analysis,'' \emph{Manage. Sci.}, vol.~13, no.~3, pp.~210--216, 1966.
 \bibitem{hastie1993varying} T.~Hastie and R.~Tibshirani, ``Varying-coefficient models,'' \emph{J. R. Stat. Soc. Ser. B}, vol.~55, no.~4, pp.~757--796, 1993.
-\bibitem{alvarezmelis2018senn} D.~Alvarez-Melis and T.~S. Jaakkola, ``Towards robust interpretability with self-explaining neural networks,'' in \emph{Proc. NeurIPS}, 2018.
 \bibitem{dugas2001softplus} C.~Dugas, Y.~Bengio, F.~B\'elisle, C.~Nadeau, and R.~Garcia, ``Incorporating second-order functional knowledge for better option pricing,'' in \emph{Proc. NIPS}, vol.~13, 2001, pp.~451--457.
-\bibitem{sill1998monotonic} J.~Sill, ``Monotonic networks,'' in \emph{Proc. NIPS}, vol.~10, 1998, pp.~661--667.
 \bibitem{daniels2010monotone} H.~Daniels and M.~Velikova, ``Monotone and partially monotone neural networks,'' \emph{IEEE Trans. Neural Netw.}, vol.~21, no.~6, pp.~906--917, 2010.
 \bibitem{bengio2013estimating} Y.~Bengio, N.~L\'eonard, and A.~Courville, ``Estimating or propagating gradients through stochastic neurons for conditional computation,'' 2013, arXiv:1308.3432.
 \bibitem{dosovitskiy2020yoto} A.~Dosovitskiy and J.~Djolonga, ``You only train once: Loss-conditional training of deep networks,'' in \emph{Proc. ICLR}, 2020.
-\bibitem{navon2021pareto} A.~Navon, A.~Shamsian, E.~Fetaya, and G.~Chechik, ``Learning the Pareto front with hypernetworks,'' in \emph{Proc. ICLR}, 2021.
 \bibitem{rippel2014nested} O.~Rippel, M.~A. Gelbart, and R.~P. Adams, ``Learning ordered representations with nested dropout,'' in \emph{Proc. ICML}, 2014.
+\bibitem{wang2019glue} A.~Wang, A.~Singh, J.~Michael, F.~Hill, O.~Levy, and S.~R. Bowman, ``GLUE: A multi-task benchmark and analysis platform for natural language understanding,'' in \emph{Proc. ICLR}, 2019.
+\bibitem{koehn2004statistical} P.~Koehn, ``Statistical significance tests for machine translation evaluation,'' in \emph{Proc. EMNLP}, 2004, pp.~388--395.
 \end{thebibliography}
 
 \end{document}
