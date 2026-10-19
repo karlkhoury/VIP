@@ -48,7 +48,8 @@ class Study:
                  epsilon=0.25, snrs=SNRS, priority_snrs=(-10, -5, 0),
                  priority_grid=(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9),
                  ablation=tuple(ABLATION), data_path="data/phrasebank_multitask.parquet",
-                 smoke=False, channel="AWGN", tag="", alloc_epochs=30, val_draws=1):
+                 smoke=False, channel="AWGN", tag="", alloc_epochs=30, val_draws=1,
+                 ib_betas=(3e-4, 1e-3, 3e-3, 1e-2, 3e-2), ib_epochs=80):
         if channel not in CHANNELS:
             raise ValueError(f"channel must be one of {CHANNELS}")
         self.channel = channel
@@ -57,6 +58,9 @@ class Study:
         self.tag = tag
         self.alloc_epochs = alloc_epochs
         self.val_draws = val_draws
+        # information-bottleneck baseline (Shao et al.): sparsity weights and epochs
+        self.ib_betas = [float(b) for b in ib_betas]
+        self.ib_epochs = ib_epochs
         self.out_root = out_root
         self.seeds = list(seeds)
         self.J = tokens_per_task
@@ -84,6 +88,9 @@ class Study:
 
     def priority_name(self, mode, lam):
         return f"priority_{mode}_lam{lam:g}{self.tag}"
+
+    def ib_name(self, beta):
+        return f"ib_cap{self.main_cap}_beta{beta:g}{self.tag}"
 
     def run_dir(self, name):
         return os.path.join(self.out_root, name)
@@ -170,15 +177,32 @@ class Study:
                                                  "seed{seed}", "allocator.pt")
         return self._write(self.priority_name(mode, lam), cfg)
 
+    def ib_config(self, beta):
+        """Information-bottleneck baseline (VL-VFE, Shao et al.) at the main cap: equal split of
+        the task tokens, symbols per token chosen from the noise level; evaluated on validation
+        AND test, next to the equal split on the same pipeline and noise."""
+        cap = self.main_cap
+        cfg = deep_update(self._base(), {
+            "baseline": "ib", "cap": cap, "max_tokens_per_task": min(self.J, max(1, cap // 2)),
+            "save_checkpoint": True,
+            "init_checkpoint": os.path.join(self.run_dir(self.PIPELINE), "seed{seed}", "model.pt"),
+            "ib": {"beta": float(beta), "threshold": 1e-2, "epochs": 2 if self.smoke else self.ib_epochs,
+                   "warmup": 0 if self.smoke else 5, "ramp": 1 if self.smoke else 10, "lr": 1.0e-3,
+                   "weight_decay": 5.0e-5},
+            "train": {"val_draws": self.val_draws},
+            "eval": {"policies": ["ib", "equal"], "splits": ["val", "test"]},
+        })
+        return self._write(self.ib_name(beta), cfg)
+
     # ── running ──────────────────────────────────────────────────────────────
     def done_seeds(self, name):
         return [s for s in self.seeds
                 if os.path.exists(os.path.join(self.run_dir(name), f"seed{s}", "per_sentence.csv.gz"))]
 
-    def run(self, config_path, quiet=True):
-        """Run the missing seeds of one experiment; print progress lines only."""
+    def run(self, config_path, quiet=True, seeds=None):
+        """Run the missing seeds of one experiment (all study seeds, or `seeds`); print progress lines only."""
         name = os.path.splitext(os.path.basename(config_path))[0]
-        todo = [s for s in self.seeds if s not in self.done_seeds(name)]
+        todo = [s for s in (seeds or self.seeds) if s not in self.done_seeds(name)]
         if not todo:
             print(f"[skip] {name}: all seeds done")
             return
@@ -190,7 +214,7 @@ class Study:
             cmd += ["--device", "cpu"]
         os.makedirs(self.run_dir(name), exist_ok=True)
         log = os.path.join(self.run_dir(name), "run.log")
-        keep = ("seed ", "[warmup", "[allocator", "attention-rule", "Error", "error", "Traceback")
+        keep = ("seed ", "[warmup", "[allocator", "[ib", "attention-rule", "Error", "error", "Traceback")
         print(f"[run] {name}: seeds {todo}")
         with open(log, "a", encoding="utf-8") as f, subprocess.Popen(
                 cmd, cwd=REPO, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,

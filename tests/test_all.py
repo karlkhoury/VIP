@@ -173,6 +173,37 @@ def test_smoke_tokenalloc():
           f"loss {loss.item():.3f}")
 
 
+def test_ib_baseline():
+    """Information-bottleneck baseline: prefix masks, more symbols when noisier, power, gradients."""
+    from tokenalloc.ib_baseline import IBSystem
+    from tokenalloc.model import TokenAllocSystem
+    torch.manual_seed(0)
+    bert, tok = tiny_bert_and_tokenizer()
+    model = TokenAllocSystem(bert, {}, tokens_per_task=8, max_tokens_per_task=4)
+    ib = IBSystem(model, threshold=0.5)
+    ids, am, y = _batch(tok)
+    _, task_out = model.encode(ids, am)
+    snr = torch.tensor([-10.0, 0.0, 10.0, 20.0])
+    k = equal_split(6, 4, max_tokens=4)
+    sigma = torch.sqrt(torch.pow(10.0, -snr / 10.0) / 2.0)
+    mu = ib.activation(sigma)
+    assert (mu[..., 1:] <= mu[..., :-1] + 1e-6).all()            # non-increasing: masks are prefixes
+    hard = ib.symbol_mask(mu)
+    assert (hard[..., 1:] <= hard[..., :-1]).all() and (hard[..., 0] == 1).all()
+    n_sym = hard.sum(-1)
+    assert (n_sym[:-1] >= n_sym[1:]).all()                         # noisier channel: never fewer symbols
+    out = ib(task_out, snr, model.realization(4, "Rayleigh"), k)
+    assert torch.equal(out["symbols"], (k * n_sym).sum(-1))
+    loss = sum(torch.nn.functional.cross_entropy(l, y[:, t]) for t, l in enumerate(out["logits"])) + 0.01 * out["kl"]
+    loss.backward()
+    assert ib.ch_encoder.nets[0][0].weight.grad.abs().sum() > 0
+    assert sum(p.grad.abs().sum() for p in ib.gamma.parameters()) > 0
+    # the pipeline is untouched: copies, not shared modules
+    assert ib.ch_encoder is not model.ch_encoder and model.ch_encoder.nets[0][0].weight.grad is None
+    print(f"\n[ib] symbols per token per task at SNR {snr.tolist()}: {n_sym.tolist()} -> symbols "
+          f"{out['symbols'].tolist()}, kl {out['kl'].item():.3f}")
+
+
 def test_smoke_legacy():
     from legacy.model import FinDeepSC
     from legacy.train import legacy_loss, run_model

@@ -9,7 +9,9 @@ pipeline, plus three things the notebook needs:
   * allocator-only checkpoints: a two-stage run saves allocator.pt (a few hundred KB)
     instead of the full model (~440 MB), since the pipeline is unchanged;
   * load_allocator: re-evaluate a saved allocator on its frozen pipeline without
-    retraining (priority sweep, ablation of the selected model).
+    retraining (priority sweep, ablation of the selected model);
+  * baseline: ib: the information-bottleneck baseline (tokenalloc/ib_baseline.py) on the
+    frozen pipeline, with the equal split evaluated on the same batches and noise.
 
     python -m reproduce.run_experiment --config <path> [--seeds 0 1 2] [--device cpu]
 """
@@ -42,6 +44,22 @@ def run_once(cfg, seed, out_dir, device, log):
     log(f"attention-rule check: {'OK' if ok else 'FAILED'} {diffs}")
     if not ok:
         raise RuntimeError("Task-token attention masks are not respected by this transformers version")
+
+    if cfg.get("baseline") == "ib":     # information-bottleneck baseline (Shao et al.) on the frozen pipeline
+        from tokenalloc.ib_baseline import evaluate_ib, train_ib
+        path = cfg["init_checkpoint"].format(seed=seed)
+        state = {k: v for k, v in torch.load(path, map_location=device).items() if not k.startswith("allocator.")}
+        missing, unexpected = model.load_state_dict(state, strict=False)
+        assert all(k.startswith("allocator.") for k in missing) and not unexpected, (missing, unexpected)
+        log(f"pipeline from {path}; training the information-bottleneck coder (beta={cfg['ib']['beta']:g})")
+        cw = class_weights(ds, split["train"], cfg["train"].get("class_weighted", ["esg"]), device)
+        ib, history = train_ib(model, loaders, cw, cfg, seed, device, log)
+        if cfg.get("save_checkpoint", False):
+            torch.save(ib.state_dict(), os.path.join(out_dir, "ib.pt"))
+        splits = cfg["eval"].get("splits", ["test"])
+        df = pd.concat([evaluate_ib(ib, model, loaders[s], cfg, seed, device, split=s) for s in splits],
+                       ignore_index=True)
+        return df, history
 
     frozen = cfg["train"].get("allocator_stage", "joint") == "frozen"
     if frozen or cfg.get("load_allocator"):

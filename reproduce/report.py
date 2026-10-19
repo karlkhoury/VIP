@@ -421,6 +421,106 @@ class Report:
         ax[0].legend(fontsize=8); ax[0].set_title("Tokens given to ESG"); ax[1].set_title("ESG accuracy")
         self.save(fig, "7_priority")
 
+    # ── 8. information-bottleneck baseline (Shao et al.) ─────────────────────
+    def ib_baseline(self, betas=None):
+        """VL-VFE baseline at the main cap: beta chosen on validation with the same ε rule as λ,
+        then compared on the test set with the equal split and with the selected allocator."""
+        if self.lam is None:
+            raise RuntimeError("run section 2 (choice of λ) first")
+        eps, cap, lam = self.s.epsilon, self.s.main_cap, self.lam
+        betas = [b for b in (betas or self.s.ib_betas)
+                 if glob.glob(os.path.join(self.s.run_dir(self.s.ib_name(b)), "seed*", "per_sentence.csv.gz"))]
+        if not betas:
+            raise FileNotFoundError("no information-bottleneck results yet: run the cell above first")
+        rows = []
+        for b in betas:
+            d = self.load(self.s.ib_name(b), "val")
+            ib, e = d[d.method == "ib"], d[d.method == "equal"]
+            rows.append({"beta": b, "symbols": ib.symbols.mean(), "accuracy": ib.acc.mean(),
+                         "vs equal split": ib.acc.mean() - e.acc.mean(), "eq_acc": e.acc.mean()})
+        t = pd.DataFrame(rows)
+        t["feasible"] = t["vs equal split"] >= -eps
+        feas = t[t.feasible]
+        chosen = feas.sort_values(["symbols", "beta"]).iloc[0] if len(feas) else t.sort_values("beta").iloc[0]
+        beta = float(chosen["beta"])
+        show = t.drop(columns="eq_acc").copy()
+        show["feasible"] = show.feasible.map({True: "yes", False: "no"})
+        show["selected"] = np.where(show["beta"] == beta, "<==", "")
+        md(f"**Information-bottleneck baseline** (VL-VFE, Shao et al., JSAC 2022): equal split of the task "
+           f"tokens at cap {cap}, symbols per token chosen from the noise level. The sparsity weight β is chosen "
+           f"on **validation** with the same rule as λ (within ε = {eps} points of the equal split, fewest symbols).")
+        table(show, "Validation results for every β", 3)
+        md(f"**Selected β = {beta:g}** (validation: {chosen.symbols:.1f} symbols, {chosen.accuracy:.2f}% accuracy, "
+           f"{chosen['vs equal split']:+.2f} points vs the equal split).")
+
+        d = self.load(self.s.ib_name(beta), "test")
+        a_run = self.load(self.s.alloc_name(cap, lam), "test", lam)
+        g = {"all": a_run[a_run.method == "all"], "equal": d[d.method == "equal"],
+             "allocator": a_run[a_run.method == "allocator"], "ib": d[d.method == "ib"]}
+        seeds = sorted(int(s) for s in g["ib"].seed.unique())       # pilot runs may have fewer seeds
+        g = {m: x[x.seed.isin(seeds)] for m, x in g.items()}
+        e_alloc = a_run[(a_run.method == "equal") & a_run.seed.isin(seeds)].acc.mean()
+        if abs(e_alloc - g["equal"].acc.mean()) > 0.01:
+            md(f"⚠️ The equal split differs between the two runs ({e_alloc:.3f} vs {g['equal'].acc.mean():.3f}): "
+               f"the pipelines or the noise do not match.")
+        names = {"all": f"No allocator, no cap ({self.s.J * 3} tokens)", "equal": f"No allocator, cap {cap} (equal split)",
+                 "allocator": f"Learned allocator (ours), cap {cap}, λ = {lam:g}",
+                 "ib": f"Information bottleneck (Shao et al.), cap {cap}, β = {beta:g}"}
+        rows = [{"method": names[m], "symbols": x.symbols.mean(), "Sentiment": x.correct_S.mean() * 100,
+                 "FLS": x.correct_F.mean() * 100, "ESG": x.correct_E.mean() * 100, "mean accuracy": x.acc.mean(),
+                 "symbols saved vs equal (%)": (1 - x.symbols.mean() / g["equal"].symbols.mean()) * 100}
+                for m, x in g.items()]
+        table(pd.DataFrame(rows), f"Test set, seeds {seeds}")
+        comps = [("information bottleneck − equal split", g["ib"], g["equal"]),
+                 ("allocator − information bottleneck", g["allocator"], g["ib"])]
+        sig = []
+        for label, x, y in comps:
+            ra, rs = self.paired(x, y, "acc"), self.paired(x, y, "symbols")
+            sig.append({"comparison": label, "Δ accuracy [95% CI]": ci(ra), "Δ symbols [95% CI]": ci(rs),
+                        "accuracy significant": "yes" if ra["lo"] > 0 or ra["hi"] < 0 else "no",
+                        "symbols significant": "yes" if rs["lo"] > 0 or rs["hi"] < 0 else "no"})
+        table(pd.DataFrame(sig), "Paired bootstrap (10,000 resamples)")
+        self.note(f"Information bottleneck (β = {beta:g}): {g['ib'].symbols.mean():.1f} symbols vs "
+                  f"{g['allocator'].symbols.mean():.1f} for the allocator; allocator − IB accuracy {sig[1]['Δ accuracy [95% CI]']}, "
+                  f"symbols {sig[1]['Δ symbols [95% CI]']}.")
+        per = pd.DataFrame({f"{m}: symbols": x.groupby("snr_db").symbols.mean() for m, x in g.items() if m != "all"})
+        for m in ("equal", "allocator", "ib"):
+            per[f"{m}: accuracy"] = g[m].groupby("snr_db").acc.mean()
+        per["ib: symbols per token"] = (g["ib"].symbols / g["ib"].tokens).groupby(g["ib"].snr_db).mean()
+        table(per.reset_index().rename(columns={"snr_db": "SNR (dB)"}), "Per SNR (test)", 2)
+
+        # accuracy vs symbols for every λ (ours) and every β (theirs), test set
+        curve = {"allocator": [], "ib": []}
+        for l in self.s.lambda_grid:
+            x = self.load(self.s.alloc_name(cap, l), "test", l)
+            x = x[(x.method == "allocator") & x.seed.isin(seeds)]
+            curve["allocator"].append((x.symbols.mean(), x.acc.mean()))
+        for b in betas:
+            x = self.load(self.s.ib_name(b), "test")
+            x = x[(x.method == "ib") & x.seed.isin(seeds)]
+            curve["ib"].append((x.symbols.mean(), x.acc.mean()))
+        fig, ax = plt.subplots(1, 3, figsize=(16, 4.2))
+        style = {"equal": (COLOR["equal"], names["equal"]), "allocator": (COLOR["allocator"], names["allocator"]),
+                 "ib": (COLOR["embed"], names["ib"])}
+        for m, (c, lab) in style.items():
+            s = g[m].groupby("snr_db")
+            ax[0].plot(s.symbols.mean().index, s.symbols.mean().values, marker="o", color=c, label=lab)
+            ax[1].plot(s.acc.mean().index, s.acc.mean().values, marker="o", color=c, label=lab)
+        ax[0].set_yscale("log"); ax[0].set_ylabel("symbols per sentence (log)"); ax[0].set_title("Bandwidth used")
+        ax[1].set_ylabel("mean accuracy (%)"); ax[1].set_title("Accuracy")
+        for a_ in ax[:2]:
+            a_.set_xlabel("SNR (dB)")
+        ax[1].legend(fontsize=7)
+        for m, c, lab in (("allocator", COLOR["allocator"], "allocator, every λ"), ("ib", COLOR["embed"], "information bottleneck, every β")):
+            pts = sorted(curve[m])
+            ax[2].plot([p[0] for p in pts], [p[1] for p in pts], marker="o", color=c, label=lab)
+        ax[2].scatter([g["equal"].symbols.mean()], [g["equal"].acc.mean()], color=COLOR["equal"], zorder=3,
+                      label=f"equal split, cap {cap}")
+        ax[2].set_xlabel("average symbols per sentence"); ax[2].set_ylabel("mean accuracy (%)")
+        ax[2].set_title("Accuracy vs bandwidth (test)"); ax[2].legend(fontsize=7)
+        self.save(fig, "8_ib_baseline")
+        return beta
+
     # ── summary ──────────────────────────────────────────────────────────────
     def summary(self):
         md("### Significant results\n" + "\n".join(f"- {f}" for f in self.findings))
