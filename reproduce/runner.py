@@ -86,8 +86,10 @@ class Study:
     def ablation_name(self, variant, lam):
         return f"ablation_{variant}_lam{lam:g}{self.tag}"
 
-    def priority_name(self, mode, lam):
-        return f"priority_{mode}_lam{lam:g}{self.tag}"
+    def priority_name(self, mode, lam, snrs=None):
+        """snrs=None: the default sweep SNRs; otherwise a separate run at the given SNRs."""
+        at = "" if snrs is None else "_at" + "_".join(f"{s:g}" for s in snrs)
+        return f"priority_{mode}_lam{lam:g}{at}{self.tag}"
 
     def ib_name(self, beta):
         return f"ib_cap{self.main_cap}_beta{beta:g}{self.tag}"
@@ -166,16 +168,19 @@ class Study:
                                                  "seed{seed}", "allocator.pt")
         return self._write(self.ablation_name(variant, lam), cfg)
 
-    def priority_config(self, mode, lam):
+    def priority_config(self, mode, lam, snrs=None):
         """Priority sweep: 'gain' re-evaluates the selected allocator, 'embed' trains the
-        figure-style allocator (priority embedded in the hidden layer) and sweeps it."""
+        figure-style allocator (priority embedded in the hidden layer) and sweeps it.
+        `snrs` (gain only): re-evaluate at other SNRs, e.g. (-15,), as a separate run."""
         sweep = [[round((1 - w) / 2, 4), round((1 - w) / 2, 4), w] for w in self.priority_grid]
         cfg = self._alloc(self.main_cap, lam, allocator={"priority_mode": mode}, priorities=sweep,
-                          snrs=self.priority_snrs, policies=("allocator", "equal"))
+                          snrs=list(snrs) if snrs else self.priority_snrs, policies=("allocator", "equal"))
         if mode == "gain":
             cfg["load_allocator"] = os.path.join(self.run_dir(self.alloc_name(self.main_cap, lam)),
                                                  "seed{seed}", "allocator.pt")
-        return self._write(self.priority_name(mode, lam), cfg)
+        elif snrs:
+            raise ValueError("extra SNRs only re-evaluate the selected (gain) allocator")
+        return self._write(self.priority_name(mode, lam, snrs), cfg)
 
     def ib_config(self, beta):
         """Information-bottleneck baseline (VL-VFE, Shao et al.) at the main cap: equal split of

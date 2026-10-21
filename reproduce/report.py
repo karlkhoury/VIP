@@ -521,6 +521,47 @@ class Report:
         self.save(fig, "8_ib_baseline")
         return beta
 
+    # ── 8b. high-priority task at low SNR: allocator vs IB ───────────────────
+    def priority_vs_ib(self, beta, extra_snrs=(-15,), high=(0.8, 0.9)):
+        """ESG accuracy of our allocator when ESG has a high priority, against the IB baseline (which
+        has no priority input), at every low SNR, paired on the same sentences, seeds and noise."""
+        lam = self.lam
+        frames = [self.load(self.s.priority_name("gain", lam), "test", lam)]
+        if extra_snrs:
+            frames.append(self.load(self.s.priority_name("gain", lam, extra_snrs), "test", lam))
+        pr = pd.concat(frames, ignore_index=True)
+        ours = pr[pr.method == "allocator"]
+        snrs = sorted(ours.snr_db.unique())
+        d = self.load(self.s.ib_name(beta), "test")
+        ib = d[(d.method == "ib") & d.snr_db.isin(snrs)]
+        k = ["seed", "snr_db", "sentence_id"]
+        cols = k + ["correct_S", "correct_F", "correct_E", "symbols", "k_E"]
+        rows = []
+        for w in high:
+            o = ours[ours.w_E == round(w, 2)]
+            for s_ in snrs + ["all"]:
+                a = o if s_ == "all" else o[o.snr_db == s_]
+                m = a[cols].merge(ib[cols], on=k, suffixes=("_o", "_ib"))
+                r = paired_bootstrap(m.correct_E_o.values * 100, m.correct_E_ib.values * 100)
+                ws = (1 - w) / 2
+                wo = (ws * m.correct_S_o + ws * m.correct_F_o + w * m.correct_E_o) * 100
+                wi = (ws * m.correct_S_ib + ws * m.correct_F_ib + w * m.correct_E_ib) * 100
+                rw = paired_bootstrap(wo.values, wi.values)
+                rows.append({"w_ESG": w, "SNR (dB)": "all" if s_ == "all" else f"{s_:g}",
+                             "ESG acc, ours": m.correct_E_o.mean() * 100, "ESG acc, IB": m.correct_E_ib.mean() * 100,
+                             "ours − IB, ESG [CI]": ci(r), "weighted acc, ours − IB [CI]": ci(rw),
+                             "ESG tokens, ours": m.k_E_o.mean(), "symbols, ours": m.symbols_o.mean(),
+                             "symbols, IB": m.symbols_ib.mean()})
+        md(f"High-priority task: ESG priority w_ESG, the other two tasks share the rest. The IB baseline "
+           f"(β = {beta:g}) has no priority input. Paired on the same seeds, sentences and noise.")
+        t = pd.DataFrame(rows)
+        table(t, "ESG accuracy at low SNR: allocator with ESG priority vs information bottleneck (test)")
+        best = t[t["SNR (dB)"] == f"{min(snrs):g}"].iloc[-1]
+        self.note(f"High ESG priority (w = {best.w_ESG}) at {min(snrs):g} dB: ESG {best['ESG acc, ours']:.1f}% (ours) vs "
+                  f"{best['ESG acc, IB']:.1f}% (IB), difference {best['ours − IB, ESG [CI]']}; symbols "
+                  f"{best['symbols, ours']:.1f} vs {best['symbols, IB']:.1f}.")
+        return t
+
     # ── summary ──────────────────────────────────────────────────────────────
     def summary(self):
         md("### Significant results\n" + "\n".join(f"- {f}" for f in self.findings))
