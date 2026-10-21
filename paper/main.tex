@@ -2,6 +2,7 @@
 \IEEEoverridecommandlockouts
 \usepackage{cite}
 \usepackage{amsmath,amssymb,amsfonts}
+\usepackage{dsfont}   % indicator function \mathds{1}
 \usepackage{graphicx}
 \usepackage{textcomp}
 \usepackage{xcolor}
@@ -43,8 +44,9 @@ channel symbols. The best way to share them is not fixed: the channel
 quality changes over time, some sentences are harder than others for a
 given task, and the operator may change the importance of each task at
 run time. Systems that give each task a fixed share, or always send the
-same number of symbols, waste symbols on clean channels and starve
-tasks on noisy ones. We therefore decide, for every sentence and
+same number of symbols, spend more symbols than a clean channel
+requires and leave the tasks insufficiently protected on a noisy
+one. We therefore decide, for every sentence and
 before the channel, how many symbols each task receives. Each task
 owns learnable task tokens inside a FinBERT encoder, and only its
 first tokens are sent. A small allocator chooses the number of tokens
@@ -69,39 +71,56 @@ task tokens, adaptive rate, FinBERT.
 \section{Introduction}
 \label{sec:intro}
 
-Semantic communication sends the meaning of a message instead of its
-raw bits, so that fewer channel symbols are needed to keep the
-downstream tasks accurate \cite{gunduz2023beyond}. Learned systems such
-as DeepSC \cite{xie2021deepsc} train the semantic encoder, the channel
-code and the receiver together. Many applications need several answers
-from the same message. A financial sentence, for example, can be read
-at once for its sentiment, for whether it makes a forward-looking
-statement (FLS) and for its environmental, social or governance (ESG)
-topic. Sending one message for all tasks saves symbols, but the tasks
-then compete for the same channel uses, and the best share keeps
-changing: a clean channel needs few symbols while a noisy one needs
-many, a sentence that is easy for one task can be hard for another,
-and the operator may favour one task for a while. A fixed share per
-task, or a fixed number of symbols, wastes symbols when the channel is
-good and starves the important tasks when it is bad.
+Semantic and goal-oriented communication transmits the meaning that a
+receiver needs instead of an exact copy of the source, so that fewer
+channel symbols are required for the same task performance
+\cite{gunduz2023beyond, strinati2021beyond}. Deep joint source-channel
+coding learns the encoder, the channel code and the receiver together,
+first for images \cite{bourtsoulatze2019deep} and then for text in
+DeepSC \cite{xie2021deepsc}, for speech \cite{weng2021speech} and for
+multi-user, multimodal tasks \cite{xie2022multiuser}. Many applications
+require several answers from the same message. A financial sentence,
+for example, can be analyzed simultaneously for its sentiment, for
+whether it contains a forward-looking statement (FLS) and for its
+environmental, social or governance (ESG) topic. Transmitting one
+message for all tasks saves channel resources, but the tasks then
+compete for the same channel uses, and the most efficient share varies
+over time: a clean channel requires few symbols while a noisy one
+requires many, a sentence that is easy for one task can be difficult
+for another, and the operator may assign a higher importance to one
+task for a period of time. A fixed share per task, or a fixed number of
+symbols, cannot follow these variations: it spends more symbols than a
+clean channel requires and leaves the most important tasks
+insufficiently protected when the channel degrades.
 
+Several works adapt the transmission to the channel. The attention
+modules of ADJSCC \cite{xu2022adjscc} adapt the features of a single
+model to the signal-to-noise ratio (SNR), and bandwidth-agile coding
+\cite{kurka2021bandwidth} orders the transmitted features so that any
+prefix can be decoded. Other works adapt the number of transmitted
+features: a policy network chooses it from the SNR and the image
+content \cite{yang2022adaptive}, an information-bottleneck encoder
+activates fewer feature dimensions on better channels
+\cite{shao2022learning}, and a token-selection block keeps a given
+number of transformer tokens per sample \cite{devoto2024adaptive}. At
+the network level, the number of semantic symbols per user can be
+allocated with a semantic spectral efficiency \cite{yan2022resource},
+and transmit power can be allocated according to the semantic
+importance of each part of the message \cite{guo2023importance}.
 Multi-task semantic systems share one encoder among the tasks
-\cite{sheng2024multitask, zhang2024udeepsc}. U-DeepSC
+\cite{sheng2024multitask, zhang2024udeepsc}, and U-DeepSC
 \cite{zhang2024udeepsc} adapts the number of transmitted features to
-the noise level but serves one task per transmission, and Shao
-\emph{et al.} \cite{shao2022learning} adapt the feature length to the
-channel for a single task. In our earlier study, the split between
-tasks was made after the channel, with soft masks on a shared
-representation. Only a hard equal split helped, and doubling the rate
-without controlling the split made accuracy worse. The split should
-therefore be made before the channel, in units owned by one task, and
-the number of symbols should itself be a decision.
+the noise level, but it serves one task per transmission. These methods
+decide the length of the transmission for one task or one user. None
+of them divides a per-sentence budget among several tasks of the same
+message, with a priority that the operator can change while the system
+runs.
 
-We follow both lessons. Each task owns ordered task tokens inside the
-encoder, and a small allocator decides, for every sentence, how many of
-them each task sends, from the sentence, the average signal-to-noise
-ratio (SNR) and the operator priority, under a total cap and a price
-per token. Our contributions are the following.
+This paper addresses this problem with an allocation made before the
+channel. Each task owns ordered task tokens inside the encoder, and a
+small allocator decides, for every sentence, how many of them each task
+sends, from the sentence, the average SNR and the operator priority,
+under a total cap and a price per token. Our contributions are the following.
 
 \begin{enumerate}
   \item An encoder-side multi-task design. Each task owns ordered task
@@ -185,7 +204,7 @@ channels are studied separately.
 
 \textit{Receiver:} The receiver knows $\mathbf{h}$ and applies zero
 forcing, $\hat{\mathbf{x}} = \mathbf{y} \oslash \mathbf{h}$, as in
-DeepSC \cite{xie2021deepsc}. Using the header, it cuts
+DeepSC \cite{xie2021deepsc}. Using the header, it divides
 $\hat{\mathbf{x}}$ into blocks of four symbols, and a channel decoder
 for each task ($8 \to 256 \to 768$) rebuilds each token. An attention
 pooling layer for each task, with a learned query, combines the
@@ -197,7 +216,7 @@ never sees the fading of individual symbols.
 \textit{How the blocks are linked:} The counts $\mathbf{k}$ are the only
 interface between the allocator and the rest of the system. At the
 transmitter they decide which task tokens are encoded, and through the
-header they tell the receiver how to cut the stream and which tokens
+header they inform the receiver how to divide the stream and which tokens
 each pooling layer may use. Because the tokens are ordered
 (Section~\ref{sec:setup}), the first $k_t$ tokens are the most useful
 ones, so $\mathbf{k}$ alone describes what was sent. The tasks interact
@@ -246,9 +265,9 @@ the score of task $t$ is
   s_t = b_t(\mathbf{u}) + \mathrm{softplus}\big(g_t(\mathbf{u})\big)\, w_t .
   \label{eq:score}
 \end{equation}
-The base score says how many tokens the task needs for this sentence
-and channel, and the gain says how much the priority should count in
-this situation. The priority does not enter the hidden layer.
+The base score represents the number of tokens the task needs for
+this sentence and channel, and the gain determines how much the
+priority counts in this situation. The priority does not enter the hidden layer.
 
 \begin{proposition}
 \label{prop:monotone}
@@ -332,7 +351,7 @@ over $M = |S||\Gamma||D|$ cases, the average number of symbols and the
 accuracy of task $t$ are
 \begin{align}
   \bar N &= \frac{1}{M}\sum_{s,\gamma,i} 4\sum_{t=1}^{T} k_t(i,\gamma,s), \label{eq:symbols}\\
-  \mathrm{Acc}_t &= \frac{100}{M}\sum_{s,\gamma,i} \mathbb{1}\big[\hat y_t(i,\gamma,s) = y_t(i)\big]. \label{eq:acc}
+  \mathrm{Acc}_t &= \frac{100}{M}\sum_{s,\gamma,i} \mathds{1}\big[\hat y_t(i,\gamma,s) = y_t(i)\big]. \label{eq:acc}
 \end{align}
 The mean accuracy is the unweighted average over the tasks, as in
 multi-task benchmarks \cite{wang2019glue}, cost is measured as the
@@ -342,7 +361,17 @@ is not equal. Differences between methods are given with
 paired-bootstrap 95\% confidence intervals \cite{koehn2004statistical}
 (10,000 resamples over seed, SNR and sentence). The baselines run on
 the same frozen pipeline without an allocator: every task sends all
-its tokens, or the cap is split equally between the tasks.
+its tokens, or the cap is split equally between the tasks. We also
+compare with the variable-length feature encoding of Shao \emph{et
+al.} \cite{shao2022learning}, a transmitter-side method that also
+trades symbols for accuracy. Adapted to our three tasks, it keeps the
+equal split of the task tokens at $K{=}16$ and decides, from the SNR
+only, how many of the four symbols of each token are sent, through one
+cut-off network per task and a sparsity term weighted by $\beta$. Its
+channel encoders and decoders, pooling layers and heads start from the
+stage-1 pipeline and are retrained with its loss for 80 epochs, its
+decoder also receives the SNR, and $\beta$ is chosen on validation
+with the same rule as $\lambda$.
 
 The price $\lambda$ is chosen on the validation set only. Among $\lambda \in \{0.001, 0.002, 0.003, 0.005, 0.01, 0.02\}$ at
 $K{=}16$, we keep the one that sends the fewest symbols while staying
@@ -366,8 +395,8 @@ strongly on the channel. To come within 0.5 points of its best
 accuracy, each task needs 29 tokens at $-15$\,dB but a single token
 from 5\,dB upward on AWGN. Deep fades make Rayleigh more demanding: 31
 tokens at $-15$\,dB, 5 at 5\,dB and a single token only at 20\,dB. A
-fixed number of tokens therefore either wastes symbols on clean
-channels or starves noisy ones.
+fixed number of tokens is therefore either larger than a clean channel
+requires or insufficient for a noisy one.
 
 \subsection{Choice of the Price}
 \label{ssec:price}
@@ -437,12 +466,14 @@ AWGN and 4.7 points on Rayleigh, but costs 384 symbols per sentence.
     All tokens, no cap     & 384  & 87.62 & $+2.76$ & 384  & 86.28 & $+4.66$ \\
     Equal split, $K{=}16$  & 64   & 84.86 &         & 64   & 81.62 & \\
     Allocator, $K{=}16$    & 35.1 & 84.81 & $-0.05$ & 47.1 & 81.38 & $-0.24$ \\
+    % TODO Rayleigh: fill in after the Rayleigh run of the information-bottleneck baseline
+    Inf. bottleneck \cite{shao2022learning} & 47.4 & 85.91 & $+1.05$ & -- & -- & -- \\
     \bottomrule
   \end{tabular}
 \end{table}
 
 Fig.~\ref{fig:bench} shows where the savings come from. The allocator
-sends almost the whole cap at low SNR, where every token helps, and
+uses nearly the entire cap at low SNR, where every token improves the accuracy, and
 lowers its rate as the channel improves: from 64 to 12 symbols per
 sentence on AWGN and from 63 to 17 on Rayleigh, which needs more
 symbols than AWGN at every SNR, as the saturation results predict. At
@@ -451,14 +482,36 @@ advantage of sending every token is concentrated at low SNR ($-15$ and
 $-10$\,dB on AWGN, up to $-5$\,dB on Rayleigh), where the cap of 16
 tokens limits both the equal split and the allocator.
 
-\begin{figure}[!t]
+\begin{figure*}[t]
   \centering
-  \includegraphics[width=\columnwidth]{benchmarks_snr.pdf}
-  \caption{The three benchmarks against SNR, $J{=}32$, test set, mean
-           of 3 seeds: symbols sent (left, log scale) and mean accuracy
-           (right). Color: channel. Line style: system.}
+  \includegraphics[width=\textwidth]{benchmarks_snr.pdf}
+  \caption{The benchmarks against SNR, $J{=}32$, test set, mean of 3
+           seeds: symbols sent (left, log scale) and mean accuracy on each
+           channel. Color: channel. Line style: system.}
   \label{fig:bench}
-\end{figure}
+\end{figure*}
+
+\subsection{Comparison with an Information-Bottleneck Coder}
+\label{ssec:ib}
+
+% TODO Rayleigh: add the Rayleigh numbers after its run of the baseline
+On AWGN, the information-bottleneck coder selected on validation
+($\beta{=}0.001$) sends 47.4 symbols, 26 percent fewer than the equal
+split, with an accuracy 1.05 points higher ($[0.89, 1.20]$). Our
+allocator sends 12.3 fewer symbols than this coder ($[12.1, 12.4]$)
+and is 1.10 points less accurate ($[0.93, 1.26]$). Part of this
+difference comes from the retrained receiver: at $-15$\,dB both the
+coder and the equal split send all 64 symbols, yet the coder is 4.1
+points more accurate. At a similar number of symbols, the allocator is
+more accurate when the budget is small: on validation, at about 35
+symbols, it reaches 85.9 percent against 82.7 percent for the coder
+($\beta{=}0.003$). On clean channels the allocator sends 12 to 14
+symbols from 10\,dB upward, against 25 to 32 for the coder, which
+cannot go below one symbol per token (16 symbols). When ESG has a
+priority of 0.9, between $-10$ and 0\,dB, the allocator reaches the
+same ESG accuracy as the coder, which has no priority input (84.9
+against 85.0 percent, $-0.07$ points, $[-0.66, 0.51]$), while sending
+18 percent fewer symbols (48.9 against 59.6).
 
 \subsection{Effect of the Cap}
 \label{ssec:caps}
@@ -470,8 +523,8 @@ on Rayleigh, because a larger cap lets the equal split send more
 tokens that the channel does not need. At caps 8 and 16 the accuracy
 is unchanged on AWGN; on Rayleigh, cap 8 is even more accurate than
 the equal split ($+0.27$ points, $[0.11, 0.42]$) because the allocator
-moves tokens between tasks. At caps 32 and 64 the allocator gives up
-0.6 to 2.0 points in exchange for the larger savings.
+moves tokens between tasks. At caps 32 and 64 the allocator loses
+0.6 to 2.0 accuracy points in exchange for the larger savings.
 
 \begin{figure}[!t]
   \centering
@@ -504,9 +557,9 @@ We moved the split between tasks in multi-task semantic communication
 to the transmitter. Each task owns ordered task tokens, and a small
 allocator decides for every sentence how many of them each task sends,
 from the sentence, the average SNR and the priority, under a cap and a
-price per token, with a priority input that provably never works
-against the chosen task. The allocator follows the channel: it sends
-almost the whole cap on noisy channels and few symbols on clean ones.
+price per token, with a priority input that provably never lowers the
+score of the prioritized task. The allocator follows the channel: it sends
+nearly the entire cap on noisy channels and few symbols on clean ones.
 It keeps the accuracy of an equal split with 45 percent fewer symbols
 on AWGN, uses 26 percent fewer on Rayleigh fading at a small accuracy
 cost, and steers accuracy toward the prioritized task. The FLS and ESG
@@ -522,6 +575,18 @@ the transmitter could also choose which channel uses carry each task.
 \begin{thebibliography}{00}
 \bibitem{gunduz2023beyond} D.~G\"und\"uz \emph{et al.}, ``Beyond transmitting bits: Context, semantics, and task-oriented communications,'' \emph{IEEE J. Sel. Areas Commun.}, vol.~41, no.~1, pp.~5--41, 2023.
 \bibitem{xie2021deepsc} H.~Xie, Z.~Qin, G.~Y. Li, and B.-H. Juang, ``Deep learning enabled semantic communication systems,'' \emph{IEEE Trans. Signal Process.}, vol.~69, pp.~2663--2675, 2021.
+% TODO verify volume and pages of the journal version before submission
+\bibitem{strinati2021beyond} E.~Calvanese Strinati and S.~Barbarossa, ``6G networks: Beyond Shannon towards semantic and goal-oriented communications,'' \emph{Comput. Netw.}, vol.~190, 2021, Art. no.~107930.
+% TODO verify pages of the journal version before submission
+\bibitem{weng2021speech} Z.~Weng and Z.~Qin, ``Semantic communication systems for speech transmission,'' \emph{IEEE J. Sel. Areas Commun.}, vol.~39, no.~8, pp.~2434--2444, 2021.
+% TODO verify pages of the journal version before submission
+\bibitem{xie2022multiuser} H.~Xie, Z.~Qin, X.~Tao, and K.~B. Letaief, ``Task-oriented multi-user semantic communications,'' \emph{IEEE J. Sel. Areas Commun.}, vol.~40, no.~9, pp.~2584--2597, 2022.
+\bibitem{xu2022adjscc} J.~Xu, B.~Ai, W.~Chen, A.~Yang, P.~Sun, and M.~Rodrigues, ``Wireless image transmission using deep source channel coding with attention modules,'' \emph{IEEE Trans. Circuits Syst. Video Technol.}, vol.~32, no.~4, pp.~2315--2328, 2022.
+\bibitem{kurka2021bandwidth} D.~B. Kurka and D.~G\"und\"uz, ``Bandwidth-agile image transmission with deep joint source-channel coding,'' \emph{IEEE Trans. Wireless Commun.}, vol.~20, no.~12, pp.~8081--8095, 2021.
+\bibitem{yang2022adaptive} M.~Yang and H.-S. Kim, ``Deep joint source-channel coding for wireless image transmission with adaptive rate control,'' in \emph{Proc. IEEE ICASSP}, 2022.
+\bibitem{devoto2024adaptive} A.~Devoto, S.~Petruzzi, J.~Pomponi, P.~Di Lorenzo, and S.~Scardapane, ``Adaptive semantic token selection for AI-native goal-oriented communications,'' 2024, arXiv:2405.02330.
+\bibitem{yan2022resource} L.~Yan, Z.~Qin, R.~Zhang, Y.~Li, and G.~Y. Li, ``Resource allocation for text semantic communications,'' \emph{IEEE Wireless Commun. Lett.}, vol.~11, no.~7, pp.~1394--1398, 2022.
+\bibitem{guo2023importance} S.~Guo, Y.~Wang, S.~Li, and N.~Saeed, ``Semantic importance-aware communications using pre-trained language models,'' \emph{IEEE Commun. Lett.}, vol.~27, no.~9, pp.~2328--2332, 2023.
 \bibitem{sheng2024multitask} Y.~Sheng, F.~Li, L.~Liang, and S.~Jin, ``A multi-task semantic communication system for natural language processing,'' in \emph{Proc. IEEE VTC-Fall}, 2022, pp.~1--5.
 % TODO verify the final journal version of U-DeepSC before submission
 \bibitem{zhang2024udeepsc} G.~Zhang \emph{et al.}, ``A unified multi-task semantic communication system for multimodal data,'' 2022, arXiv:2209.07689.
