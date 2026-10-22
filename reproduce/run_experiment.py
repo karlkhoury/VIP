@@ -11,7 +11,9 @@ pipeline, plus three things the notebook needs:
   * load_allocator: re-evaluate a saved allocator on its frozen pipeline without
     retraining (priority sweep, ablation of the selected model);
   * baseline: ib: the information-bottleneck baseline (tokenalloc/ib_baseline.py) on the
-    frozen pipeline, with the equal split evaluated on the same batches and noise.
+    frozen pipeline, with the equal split evaluated on the same batches and noise;
+  * receiver: train (or load) a receiver retrained like the IB baseline's
+    (tokenalloc/retrained_receiver.py); the allocator then runs on it.
 
     python -m reproduce.run_experiment --config <path> [--seeds 0 1 2] [--device cpu]
 """
@@ -62,13 +64,35 @@ def run_once(cfg, seed, out_dir, device, log):
         return df, history
 
     frozen = cfg["train"].get("allocator_stage", "joint") == "frozen"
-    if frozen or cfg.get("load_allocator"):
+    rcfg = cfg.get("receiver")
+    if frozen or cfg.get("load_allocator") or rcfg:
         path = cfg["init_checkpoint"].format(seed=seed)
         state = {k: v for k, v in torch.load(path, map_location=device).items()
                  if not k.startswith("allocator.")}
         missing, unexpected = model.load_state_dict(state, strict=False)
         assert all(k.startswith("allocator.") for k in missing) and not unexpected, (missing, unexpected)
         log(f"pipeline from {path}")
+
+    if rcfg:   # same-receiver control: a retrained receiver replaces the stage-1 transmit_decode
+        from tokenalloc.retrained_receiver import RetrainedReceiver, attach, train_rx
+        if rcfg.get("load"):
+            rx = RetrainedReceiver(model, rcfg["slots"]).to(device)
+            rpath = rcfg["load"].format(seed=seed)
+            rx.load_state_dict(torch.load(rpath, map_location=device))
+            rx.eval()
+            log(f"retrained receiver from {rpath}")
+            rx_history = []
+        else:
+            log("training the receiver (same budget as the information-bottleneck baseline)")
+            cw = class_weights(ds, split["train"], cfg["train"].get("class_weighted", ["esg"]), device)
+            rx, rx_history = train_rx(model, loaders, cw, cfg, seed, device, log)
+            torch.save(rx.state_dict(), os.path.join(out_dir, "rx.pt"))
+        attach(model, rx)
+        if not frozen and not cfg.get("load_allocator"):     # receiver-only run: no-allocator baselines
+            splits = cfg["eval"].get("splits", ["test"])
+            df = pd.concat([evaluate(model, loaders[s], cfg, seed, device, None, split=s) for s in splits],
+                           ignore_index=True)
+            return df, rx_history
 
     if cfg.get("load_allocator"):
         path = cfg["load_allocator"].format(seed=seed)

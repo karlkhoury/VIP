@@ -522,13 +522,17 @@ class Report:
         return beta
 
     # ── 8b. high-priority task at low SNR: allocator vs IB ───────────────────
-    def priority_vs_ib(self, beta, extra_snrs=(-15,), high=(0.8, 0.9)):
+    def priority_vs_ib(self, beta, extra_snrs=(-15,), high=(0.8, 0.9), runs=None, label=""):
         """ESG accuracy of our allocator when ESG has a high priority, against the IB baseline (which
-        has no priority input), at every low SNR, paired on the same sentences, seeds and noise."""
+        has no priority input), at every low SNR, paired on the same sentences, seeds and noise.
+        `runs`: other priority runs of ours (e.g. on the retrained receiver) instead of section 7/8b."""
         lam = self.lam
-        frames = [self.load(self.s.priority_name("gain", lam), "test", lam)]
-        if extra_snrs:
-            frames.append(self.load(self.s.priority_name("gain", lam, extra_snrs), "test", lam))
+        if runs:
+            frames = [self.load(r, "test") for r in runs]
+        else:
+            frames = [self.load(self.s.priority_name("gain", lam), "test", lam)]
+            if extra_snrs:
+                frames.append(self.load(self.s.priority_name("gain", lam, extra_snrs), "test", lam))
         pr = pd.concat(frames, ignore_index=True)
         ours = pr[pr.method == "allocator"]
         snrs = sorted(ours.snr_db.unique())
@@ -555,12 +559,51 @@ class Report:
         md(f"High-priority task: ESG priority w_ESG, the other two tasks share the rest. The IB baseline "
            f"(β = {beta:g}) has no priority input. Paired on the same seeds, sentences and noise.")
         t = pd.DataFrame(rows)
-        table(t, "ESG accuracy at low SNR: allocator with ESG priority vs information bottleneck (test)")
+        table(t, "ESG accuracy at low SNR: allocator with ESG priority vs information bottleneck (test)"
+              + (f", {label}" if label else ""))
         best = t[t["SNR (dB)"] == f"{min(snrs):g}"].iloc[-1]
-        self.note(f"High ESG priority (w = {best.w_ESG}) at {min(snrs):g} dB: ESG {best['ESG acc, ours']:.1f}% (ours) vs "
+        self.note(f"High ESG priority (w = {best.w_ESG}){' (' + label + ')' if label else ''} at {min(snrs):g} dB: ESG {best['ESG acc, ours']:.1f}% (ours) vs "
                   f"{best['ESG acc, IB']:.1f}% (IB), difference {best['ours − IB, ESG [CI]']}; symbols "
                   f"{best['symbols, ours']:.1f} vs {best['symbols, IB']:.1f}.")
         return t
+
+    # ── 8c. same receiver for both ───────────────────────────────────────────
+    def rx_compare(self, beta):
+        """Allocator on the retrained receiver vs the IB baseline: both receivers get the same training."""
+        lam, cap = self.lam, self.s.main_cap
+        rx = self.load(self.s.rx_name(), "test")
+        al = self.load(self.s.rx_alloc_name(lam), "test", lam)
+        ib_run = self.load(self.s.ib_name(beta), "test")
+        orig = self.load(self.s.alloc_name(cap, lam), "test", lam)
+        g = {"equal (stage-1 receiver)": orig[orig.method == "equal"],
+             "allocator (stage-1 receiver)": orig[orig.method == "allocator"],
+             "equal (retrained receiver)": rx[rx.method == "equal"],
+             "allocator (retrained receiver)": al[al.method == "allocator"],
+             "information bottleneck (retrained receiver)": ib_run[ib_run.method == "ib"]}
+        md(f"**Same receiver for both.** Our receiver is retrained exactly like the information-bottleneck "
+           f"(IB) baseline's (same start, 80 epochs, SNR-aware decoder), with random token counts instead of "
+           f"symbol trimming; the allocator (λ = {lam:g}) is then trained on it. IB: β = {beta:g}. Cap {cap}.")
+        eq = g["equal (retrained receiver)"]
+        rows = [{"method": m, "symbols": x.symbols.mean(), "Sentiment": x.correct_S.mean() * 100,
+                 "FLS": x.correct_F.mean() * 100, "ESG": x.correct_E.mean() * 100, "mean accuracy": x.acc.mean(),
+                 "symbols saved vs equal (%)": (1 - x.symbols.mean() / eq.symbols.mean()) * 100}
+                for m, x in g.items()]
+        table(pd.DataFrame(rows), "Test set")
+        a, b = g["allocator (retrained receiver)"], g["information bottleneck (retrained receiver)"]
+        sig = []
+        for label, x, y in (("allocator − IB (both retrained)", a, b), ("allocator − equal (retrained receiver)", a, eq),
+                            ("IB − equal (retrained receiver)", b, eq)):
+            ra, rs = self.paired(x, y, "acc"), self.paired(x, y, "symbols")
+            sig.append({"comparison": label, "Δ accuracy [95% CI]": ci(ra), "Δ symbols [95% CI]": ci(rs)})
+        table(pd.DataFrame(sig), "Paired bootstrap (10,000 resamples)")
+        self.note(f"Same receiver: allocator {a.symbols.mean():.1f} symbols / {a.acc.mean():.2f}%, IB "
+                  f"{b.symbols.mean():.1f} / {b.acc.mean():.2f}%; allocator − IB accuracy {sig[0]['Δ accuracy [95% CI]']}.")
+        per = pd.DataFrame({"equal: accuracy": eq.groupby("snr_db").acc.mean(),
+                            "allocator: symbols": a.groupby("snr_db").symbols.mean(),
+                            "allocator: accuracy": a.groupby("snr_db").acc.mean(),
+                            "IB: symbols": b.groupby("snr_db").symbols.mean(),
+                            "IB: accuracy": b.groupby("snr_db").acc.mean()})
+        table(per.reset_index().rename(columns={"snr_db": "SNR (dB)"}), "Per SNR (test), retrained receivers", 2)
 
     # ── summary ──────────────────────────────────────────────────────────────
     def summary(self):

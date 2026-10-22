@@ -81,6 +81,26 @@ def sub_realization(real: Realization, n_tokens: int) -> Realization:
     return sub
 
 
+def noise_embedding():
+    """VL-VFE noise-level embedding given to the decoder: 1 -> 16 -> 16 -> 16, ReLU."""
+    return nn.Sequential(nn.Linear(1, NOISE_EMB), nn.ReLU(), nn.Linear(NOISE_EMB, NOISE_EMB),
+                         nn.ReLU(), nn.Linear(NOISE_EMB, NOISE_EMB), nn.ReLU())
+
+
+def snr_aware_decoder(pipeline):
+    """Per-task channel decoder (8 + 16 -> 256 -> 768) that also reads the noise embedding,
+    started from the pipeline decoder (the noise input starts at zero)."""
+    L, H = SYMBOLS_PER_TOKEN, pipeline.encoder.hidden
+    dec = PerTaskMLP(pipeline.T, 2 * L + NOISE_EMB, 256, H)
+    with torch.no_grad():
+        for new, old in zip(dec.nets, pipeline.ch_decoder.nets):
+            new[0].weight.zero_()
+            new[0].weight[:, :2 * L].copy_(old[0].weight)
+            new[0].bias.copy_(old[0].bias)
+            new[2].load_state_dict(old[2].state_dict())
+    return dec
+
+
 class IBSystem(nn.Module):
     def __init__(self, pipeline, threshold=1e-2):
         super().__init__()
@@ -92,15 +112,8 @@ class IBSystem(nn.Module):
         self.pool = copy.deepcopy(pipeline.pool)
         self.heads = copy.deepcopy(pipeline.heads)
         self.gamma = nn.ModuleList(GammaNet(self.L) for _ in range(self.T))
-        self.noise_net = nn.Sequential(nn.Linear(1, NOISE_EMB), nn.ReLU(), nn.Linear(NOISE_EMB, NOISE_EMB),
-                                       nn.ReLU(), nn.Linear(NOISE_EMB, NOISE_EMB), nn.ReLU())
-        self.ch_decoder = PerTaskMLP(self.T, 2 * self.L + NOISE_EMB, 256, H)
-        with torch.no_grad():            # start from the pipeline decoder; the noise input starts at zero
-            for new, old in zip(self.ch_decoder.nets, pipeline.ch_decoder.nets):
-                new[0].weight.zero_()
-                new[0].weight[:, :2 * self.L].copy_(old[0].weight)
-                new[0].bias.copy_(old[0].bias)
-                new[2].load_state_dict(old[2].state_dict())
+        self.noise_net = noise_embedding()
+        self.ch_decoder = snr_aware_decoder(pipeline)
         self.register_buffer("upper", torch.triu(torch.ones(self.L, self.L)))
 
     def activation(self, sigma):

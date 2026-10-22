@@ -94,6 +94,16 @@ class Study:
     def ib_name(self, beta):
         return f"ib_cap{self.main_cap}_beta{beta:g}{self.tag}"
 
+    # same-receiver control (retrained receiver for our side, see tokenalloc/retrained_receiver.py)
+    def rx_name(self):
+        return f"rx_cap{self.main_cap}{self.tag}"
+
+    def rx_alloc_name(self, lam, max_per_task=None):
+        return f"rxalloc_cap{self.main_cap}_lam{lam:g}" + (f"_max{max_per_task}" if max_per_task else "") + self.tag
+
+    def rx_priority_name(self, lam, max_per_task=None):
+        return f"rxprio_cap{self.main_cap}_lam{lam:g}" + (f"_max{max_per_task}" if max_per_task else "") + self.tag
+
     def run_dir(self, name):
         return os.path.join(self.out_root, name)
 
@@ -199,6 +209,50 @@ class Study:
         })
         return self._write(self.ib_name(beta), cfg)
 
+    # ── same-receiver control ────────────────────────────────────────────────
+    @property
+    def rx_slots(self):
+        """Most tokens one task can send under the main cap (every other task keeps one)."""
+        return self.main_cap - 2
+
+    def _receiver(self, train=False):
+        if train:
+            return {"slots": self.rx_slots, "epochs": 2 if self.smoke else self.ib_epochs, "lr": 1.0e-3,
+                    "weight_decay": 5.0e-5}
+        return {"slots": self.rx_slots, "load": os.path.join(self.run_dir(self.rx_name()), "seed{seed}", "rx.pt")}
+
+    def rx_config(self):
+        """Receiver retrained with the same budget as the IB baseline (80 epochs, SNR-aware decoder),
+        with random whole-token counts instead of symbol trimming; evaluated with the equal split."""
+        cap = self.main_cap
+        cfg = deep_update(self._base(), {
+            "cap": cap, "max_tokens_per_task": min(self.J, max(1, cap // 2)), "save_checkpoint": True,
+            "init_checkpoint": os.path.join(self.run_dir(self.PIPELINE), "seed{seed}", "model.pt"),
+            "receiver": self._receiver(train=True), "train": {"val_draws": self.val_draws},
+            "eval": {"policies": ["equal"], "splits": ["val", "test"]},
+        })
+        return self._write(self.rx_name(), cfg)
+
+    def rx_alloc_config(self, lam, max_per_task=None):
+        """Allocator trained (stage 2, same recipe) on the retrained receiver. max_per_task raises the
+        per-task limit (default cap/2); the total cap is unchanged."""
+        cfg = self._alloc(self.main_cap, lam, splits=("val", "test"), policies=("allocator", "equal"))
+        if max_per_task:
+            cfg["max_tokens_per_task"] = min(max_per_task, self.rx_slots)
+        cfg["receiver"] = self._receiver()
+        return self._write(self.rx_alloc_name(lam, max_per_task), cfg)
+
+    def rx_priority_config(self, lam, max_per_task=None, snrs=(-15, -10, -5, 0)):
+        """ESG priority sweep at low SNR for an allocator trained on the retrained receiver."""
+        sweep = [[round((1 - w) / 2, 4), round((1 - w) / 2, 4), w] for w in self.priority_grid]
+        cfg = self._alloc(self.main_cap, lam, priorities=sweep, snrs=list(snrs), policies=("allocator", "equal"))
+        if max_per_task:
+            cfg["max_tokens_per_task"] = min(max_per_task, self.rx_slots)
+        cfg["receiver"] = self._receiver()
+        cfg["load_allocator"] = os.path.join(self.run_dir(self.rx_alloc_name(lam, max_per_task)),
+                                             "seed{seed}", "allocator.pt")
+        return self._write(self.rx_priority_name(lam, max_per_task), cfg)
+
     # ── running ──────────────────────────────────────────────────────────────
     def done_seeds(self, name):
         return [s for s in self.seeds
@@ -219,7 +273,7 @@ class Study:
             cmd += ["--device", "cpu"]
         os.makedirs(self.run_dir(name), exist_ok=True)
         log = os.path.join(self.run_dir(name), "run.log")
-        keep = ("seed ", "[warmup", "[allocator", "[ib", "attention-rule", "Error", "error", "Traceback")
+        keep = ("seed ", "[warmup", "[allocator", "[ib", "[rx", "attention-rule", "Error", "error", "Traceback")
         print(f"[run] {name}: seeds {todo}")
         with open(log, "a", encoding="utf-8") as f, subprocess.Popen(
                 cmd, cwd=REPO, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,

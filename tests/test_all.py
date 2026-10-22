@@ -204,6 +204,34 @@ def test_ib_baseline():
           f"{out['symbols'].tolist()}, kl {out['kl'].item():.3f}")
 
 
+def test_retrained_receiver():
+    """Same-receiver control: drop-in transmit_decode, allocator gradients, pipeline untouched."""
+    from tokenalloc.model import TokenAllocSystem
+    from tokenalloc.retrained_receiver import RetrainedReceiver, attach
+    torch.manual_seed(0)
+    bert, tok = tiny_bert_and_tokenizer()
+    model = TokenAllocSystem(bert, {}, tokens_per_task=8, max_tokens_per_task=4)
+    rx = RetrainedReceiver(model, slots=6)
+    stage1 = model.transmit_decode
+    attach(model, rx)
+    assert model.transmit_decode != stage1 and model.rx is rx
+    ids, am, y = _batch(tok)
+    cls, task_out = model.encode(ids, am)
+    snr = torch.tensor([-15.0, -5.0, 5.0, 20.0])
+    a = model.allocate(cls, task_out, snr, "Rayleigh", torch.full((4, 3), 1 / 3), cap=6)
+    out = model.transmit_decode(task_out, snr, model.realization(4, "Rayleigh"), a["k_hard"], a["c_soft"])
+    assert torch.equal(out["symbols"], a["k_hard"].sum(-1) * 4)
+    loss = sum(torch.nn.functional.cross_entropy(l, y[:, t]) for t, l in enumerate(out["logits"]))
+    loss.backward()
+    assert model.allocator.count_head.weight.grad.abs().sum() > 0     # straight-through reaches the allocator
+    assert rx.ch_decoder.nets[0][0].weight.grad is not None
+    assert model.ch_decoder.nets[0][0].weight.grad is None          # stage-1 receiver unchanged
+    k = equal_split(6, 4, max_tokens=4)
+    out2 = model.transmit_decode(task_out.detach(), snr, model.realization(4, "AWGN"), k)
+    print(f"\n[rx] counts {a['k_hard'].tolist()} -> symbols {out['symbols'].tolist()}; equal split "
+          f"symbols {out2['symbols'].tolist()}")
+
+
 def test_smoke_legacy():
     from legacy.model import FinDeepSC
     from legacy.train import legacy_loss, run_model
