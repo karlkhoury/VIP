@@ -568,6 +568,33 @@ class Report:
         return t
 
     # ── 8c. same receiver for both ───────────────────────────────────────────
+    def ib_beta_same_receiver(self, betas=None):
+        """β of the IB baseline chosen with the ε rule against the equal split on the RETRAINED
+        receiver (the IB's own receiver is retrained, so this is its fair reference)."""
+        eps = self.s.epsilon
+        ref = self.load(self.s.rx_name(), "val")
+        ref_acc = ref[ref.method == "equal"].acc.mean()
+        rows = []
+        for b in betas or self.s.ib_betas:
+            if not glob.glob(os.path.join(self.s.run_dir(self.s.ib_name(b)), "seed*", "per_sentence.csv.gz")):
+                continue
+            d = self.load(self.s.ib_name(b), "val")
+            x = d[d.method == "ib"]
+            rows.append({"beta": b, "symbols": x.symbols.mean(), "accuracy": x.acc.mean(),
+                         "vs retrained equal split": x.acc.mean() - ref_acc})
+        t = pd.DataFrame(rows)
+        t["feasible"] = t["vs retrained equal split"] >= -eps
+        feas = t[t.feasible]
+        beta = float((feas.sort_values(["symbols", "beta"]) if len(feas) else t.sort_values("beta")).iloc[0]["beta"])
+        show = t.copy()
+        show["feasible"] = show.feasible.map({True: "yes", False: "no"})
+        show["selected"] = np.where(show["beta"] == beta, "<==", "")
+        md(f"β of the IB baseline re-chosen on **validation** against the equal split on the retrained receiver "
+           f"({ref_acc:.2f}%), with the same ε = {eps} rule as λ.")
+        table(show, "IB baseline: validation results against the retrained equal split", 3)
+        md(f"**Selected β = {beta:g}** for the same-receiver comparison.")
+        return beta
+
     def rx_compare(self, beta):
         """Allocator on the retrained receiver vs the IB baseline: both receivers get the same training."""
         lam, cap = self.lam, self.s.main_cap
